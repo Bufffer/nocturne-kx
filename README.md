@@ -367,7 +367,7 @@ This software is provided "as is" without warranty of any kind. The authors and 
 
 ## Support
 
-For security issues, please contact: security@your-org.com
+For security issues, please contact: serdarogluibrahim@gmail.com
 
 For general questions, please open an issue on GitHub.
 
