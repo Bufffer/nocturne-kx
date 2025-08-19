@@ -1,0 +1,152 @@
+# Nocturne-KX .gitignore
+# ======================
+
+# Build artifacts
+nocturne-kx
+nocturne-tests
+nocturne-fuzzer
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+
+# Build directories
+build/
+dist/
+out/
+target/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.pid
+
+# Test files
+test_*.bin
+test_*.key
+test_*.txt
+test_keys/
+test_replaydb.bin
+test_mac_key.bin
+
+# Key files (security)
+*.sk
+*.pk
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Package files
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+package/
+
+# Documentation build
+docs/_build/
+docs/html/
+docs/latex/
+
+# Coverage reports
+*.gcov
+*.gcda
+*.gcno
+coverage/
+htmlcov/
+
+# Profiling data
+*.prof
+*.out
+
+# Sanitizer output
+*.asan
+*.ubsan
+*.msan
+
+# Fuzzer artifacts
+crash-*
+leak-*
+timeout-*
+oom-*
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Lock files
+package-lock.json
+yarn.lock
+Cargo.lock
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Dependencies
+vendor/
+node_modules/
+__pycache__/
+
+# Local configuration
+config.local.yaml
+settings.local.json
+
+# Audit logs
+audit.log
+security.log
+
+# Performance data
+perf.data
+perf.data.old
+
+# Memory dumps
+*.core
+*.dump
+
+# Network captures
+*.pcap
+*.pcapng
+
+# Certificate files
+*.crt
+*.cer
+*.der
+*.csr
+
+# HSM files
+*.hsm
+*.token
+*.slot
+
+# Backup directories
+backup/
+backups/

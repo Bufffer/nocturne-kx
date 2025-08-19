@@ -1,0 +1,131 @@
+name: CMake
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    # The CMake configure and build steps are platform agnostic and should work equally
+    # well on Windows or Mac.  You can convert this to a matrix build if you need
+    # cross-platform coverage.
+    # You can specify `runs-on: ubuntu-latest` or `runs-on: macos-latest` or specify a range of OS versions like `runs-on: ${{ matrix.os }}`
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential
+
+    - name: Configure CMake
+      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as Make.
+      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type#variable:CMAKE_BUILD_TYPE for more detail.
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+    - name: Build
+      # Build your program with the given configuration
+      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+
+    - name: Test
+      working-directory: ${{github.workspace}}/build
+      # Execute tests defined by the CMake configuration.
+      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
+      run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure
+
+  build-debug:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        sanitizer: [address, undefined, memory]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential clang
+
+    - name: Configure CMake with sanitizer
+      run: |
+        cmake -B ${{github.workspace}}/build-${{matrix.sanitizer}} \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_CXX_FLAGS="-fsanitize=${{matrix.sanitizer}} -fno-omit-frame-pointer" \
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=${{matrix.sanitizer}}"
+
+    - name: Build with sanitizer
+      run: cmake --build ${{github.workspace}}/build-${{matrix.sanitizer}} --config Debug
+
+    - name: Run tests with sanitizer
+      working-directory: ${{github.workspace}}/build-${{matrix.sanitizer}}
+      run: ctest -C Debug --output-on-failure
+
+  fuzzing:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential clang
+
+    - name: Configure CMake for fuzzing
+      run: |
+        cmake -B ${{github.workspace}}/build-fuzz \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DBUILD_FUZZER=ON \
+          -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer" \
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=fuzzer,address,undefined"
+
+    - name: Build fuzzer
+      run: cmake --build ${{github.workspace}}/build-fuzz --config Debug
+
+    - name: Run fuzzer (short run)
+      working-directory: ${{github.workspace}}/build-fuzz
+      run: |
+        timeout 60s ./nocturne-fuzzer -max_len=1000 -runs=1000 || true
+
+  security-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential cppcheck
+
+    - name: Static analysis with cppcheck
+      run: |
+        cppcheck --enable=all --error-exitcode=1 \
+          --suppress=missingIncludeSystem \
+          --suppress=unusedFunction \
+          nocturne-kx.cpp
+
+    - name: Configure CMake
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build --config Release
+
+    - name: Run security tests
+      working-directory: ${{github.workspace}}/build
+      run: |
+        # Run specific security-focused tests
+        ./nocturne-tests "[security]" --reporter console
