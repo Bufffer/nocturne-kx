@@ -969,8 +969,7 @@ int main(int argc, char** argv) {
         usage();
         return 1;
     } catch (const std::exception &e) {
-        std::cerr << "ERR: " << e.what() << "
-";
+        std::cerr << "ERR: " << e.what() << "\n";
         return 2;
     }
 }

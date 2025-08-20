@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        sanitizer: [address, undefined, memory]
+        sanitizer: [address, undefined]
 
     steps:
     - uses: actions/checkout@v4
@@ -70,6 +70,34 @@ jobs:
 
     - name: Run tests with sanitizer
       working-directory: ${{github.workspace}}/build-${{matrix.sanitizer}}
+      run: |
+        echo "Tests disabled (Catch2 not available)"
+
+  build-debug-memory:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential clang
+
+    - name: Configure CMake with memory sanitizer
+      run: |
+        cmake -B ${{github.workspace}}/build-memory \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DBUILD_TESTS=OFF \
+          -DCMAKE_CXX_FLAGS="-fsanitize=memory -fno-omit-frame-pointer" \
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=memory"
+
+    - name: Build with memory sanitizer
+      run: cmake --build ${{github.workspace}}/build-memory --config Debug
+
+    - name: Run tests with memory sanitizer
+      working-directory: ${{github.workspace}}/build-memory
       run: |
         echo "Tests disabled (Catch2 not available)"
 
