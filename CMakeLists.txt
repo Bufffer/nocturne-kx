@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -fsanitize=address,undefined")
+# Debug flags are set per-target to avoid conflicts with memory sanitizer
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")
 
 # Find libsodium
@@ -49,6 +49,9 @@ endif()
 # Fuzzing target
 option(BUILD_FUZZER "Build fuzzer" OFF)
 if(BUILD_FUZZER)
+    # Disable compiler test for fuzzer to avoid main() conflicts
+    set(CMAKE_CXX_COMPILER_WORKS TRUE)
+    
     add_executable(nocturne-fuzzer tests/fuzzer_main.cpp)
     target_link_libraries(nocturne-fuzzer ${SODIUM_LIBRARIES})
     target_include_directories(nocturne-fuzzer PRIVATE ${SODIUM_INCLUDE_DIRS})
