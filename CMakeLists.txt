@@ -52,6 +52,5 @@ if(BUILD_FUZZER)
     add_executable(nocturne-fuzzer tests/fuzzer_main.cpp)
     target_link_libraries(nocturne-fuzzer ${SODIUM_LIBRARIES})
     target_include_directories(nocturne-fuzzer PRIVATE ${SODIUM_INCLUDE_DIRS})
-    target_compile_options(nocturne-fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
-    target_link_options(nocturne-fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    # Fuzzer sanitizer flags are set via CMAKE_CXX_FLAGS in workflow
 endif()

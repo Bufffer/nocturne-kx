@@ -80,8 +80,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             
             Bytes plaintext(data + crypto_aead_xchacha20poly1305_ietf_KEYBYTES + 
                            crypto_aead_xchacha20poly1305_ietf_NPUBBYTES, 
-                           data + std::min(size, crypto_aead_xchacha20poly1305_ietf_KEYBYTES + 
-                                          crypto_aead_xchacha20poly1305_ietf_NPUBBYTES + 10));
+                           data + std::min(size, static_cast<size_t>(crypto_aead_xchacha20poly1305_ietf_KEYBYTES + 
+                                          crypto_aead_xchacha20poly1305_ietf_NPUBBYTES + 10)));
             
             Bytes aad = {0xAA, 0xBB, 0xCC, 0xDD};
             
@@ -115,7 +115,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             std::memcpy(sk.data(), data, crypto_sign_SECRETKEYBYTES);
             
             Bytes message(data + crypto_sign_SECRETKEYBYTES, 
-                         data + std::min(size, crypto_sign_SECRETKEYBYTES + 10));
+                         data + std::min(size, static_cast<size_t>(crypto_sign_SECRETKEYBYTES + 10)));
             
             try {
                 auto signature = ed25519_sign(message, sk);

@@ -809,6 +809,8 @@ int main(int argc, char** argv) {
             std::cout << "  Testing key generation...\n";
             auto x25519_kp = nocturne::gen_x25519();
             auto ed25519_kp = nocturne::gen_ed25519();
+            (void)x25519_kp; // Suppress unused variable warning
+            (void)ed25519_kp; // Suppress unused variable warning
             std::cout << "    ✓ X25519 key generation\n";
             std::cout << "    ✓ Ed25519 key generation\n";
             
@@ -880,8 +882,7 @@ int main(int argc, char** argv) {
             
             // Check libsodium version
             std::cout << "  Checking libsodium version...\n";
-            int major, minor, patch;
-            sodium_version_string();
+            (void)sodium_version_string(); // Suppress unused variable warning
             std::cout << "    ✓ libsodium version: " << sodium_version_string() << "\n";
             
             // Check for secure random number generation
