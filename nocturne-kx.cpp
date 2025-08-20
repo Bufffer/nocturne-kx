@@ -337,8 +337,7 @@ public:
         std::lock_guard<std::mutex> lk(mu);
         // build json text
         std::ostringstream oss;
-        for (auto &kv : m) oss << kv.first << ':' << kv.second << '
-';
+        for (auto &kv : m) oss << kv.first << ':' << kv.second << '\n';
         std::string js = oss.str();
         uint32_t json_len = static_cast<uint32_t>(js.size());
 

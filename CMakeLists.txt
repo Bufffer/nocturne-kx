@@ -20,21 +20,24 @@ target_link_libraries(nocturne-kx ${SODIUM_LIBRARIES})
 target_compile_options(nocturne-kx PRIVATE ${SODIUM_CFLAGS_OTHER})
 
 # Tests
-option(BUILD_TESTS "Build tests" ON)
+option(BUILD_TESTS "Build tests" OFF)
 if(BUILD_TESTS)
     enable_testing()
     
     # Find Catch2
-    find_package(Catch2 3 REQUIRED)
-    
-    # Test executable
-    add_executable(nocturne-tests tests/test_main.cpp)
-    target_link_libraries(nocturne-tests PRIVATE Catch2::Catch2 ${SODIUM_LIBRARIES})
-    target_include_directories(nocturne-tests PRIVATE ${SODIUM_INCLUDE_DIRS})
-    
-    # Include test files
-    include(CTest)
-    catch_discover_tests(nocturne-tests)
+    find_package(Catch2 3 QUIET)
+    if(Catch2_FOUND)
+        # Test executable
+        add_executable(nocturne-tests tests/test_main.cpp)
+        target_link_libraries(nocturne-tests PRIVATE Catch2::Catch2 ${SODIUM_LIBRARIES})
+        target_include_directories(nocturne-tests PRIVATE ${SODIUM_INCLUDE_DIRS})
+        
+        # Include test files
+        include(CTest)
+        catch_discover_tests(nocturne-tests)
+    else()
+        message(WARNING "Catch2 not found, tests will be disabled")
+    endif()
 endif()
 
 # Installation
@@ -50,4 +53,6 @@ if(BUILD_FUZZER)
     add_executable(nocturne-fuzzer tests/fuzzer_main.cpp)
     target_link_libraries(nocturne-fuzzer ${SODIUM_LIBRARIES})
     target_include_directories(nocturne-fuzzer PRIVATE ${SODIUM_INCLUDE_DIRS})
+    target_compile_options(nocturne-fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(nocturne-fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
