@@ -13,11 +13,13 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SODIUM REQUIRED libsodium)
 
-# Main executable
-add_executable(nocturne-kx nocturne-kx.cpp)
-target_include_directories(nocturne-kx PRIVATE ${SODIUM_INCLUDE_DIRS})
-target_link_libraries(nocturne-kx ${SODIUM_LIBRARIES})
-target_compile_options(nocturne-kx PRIVATE ${SODIUM_CFLAGS_OTHER})
+# Main executable (only build when not building fuzzer)
+if(NOT BUILD_FUZZER)
+    add_executable(nocturne-kx nocturne-kx.cpp)
+    target_include_directories(nocturne-kx PRIVATE ${SODIUM_INCLUDE_DIRS})
+    target_link_libraries(nocturne-kx ${SODIUM_LIBRARIES})
+    target_compile_options(nocturne-kx PRIVATE ${SODIUM_CFLAGS_OTHER})
+endif()
 
 # Tests
 option(BUILD_TESTS "Build tests" OFF)
@@ -41,7 +43,9 @@ if(BUILD_TESTS)
 endif()
 
 # Installation
-install(TARGETS nocturne-kx DESTINATION bin)
+if(NOT BUILD_FUZZER)
+    install(TARGETS nocturne-kx DESTINATION bin)
+endif()
 if(BUILD_TESTS)
     install(TARGETS nocturne-tests DESTINATION bin)
 endif()
