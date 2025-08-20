@@ -276,6 +276,11 @@ inline bool ed25519_verify(const Bytes& msg,
 
 } // namespace nocturne
 
+// Forward declarations for file I/O helpers used before their definitions
+static std::vector<uint8_t> read_all(const std::filesystem::path& p);
+static void write_all(const std::filesystem::path& p, const std::vector<uint8_t>& data);
+static void write_all_raw(const std::filesystem::path& p, const uint8_t* data, size_t n);
+
 // Robust atomic, MAC-protected ReplayDB implementation
 class ReplayDB {
     std::filesystem::path path;
@@ -424,7 +429,7 @@ public:
     
     std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
         if (!initialized_) throw std::runtime_error("FileHSM not initialized");
-        Bytes msg(data, data+len);
+        nocturne::Bytes msg(data, data+len);
         return nocturne::ed25519_sign(msg, sk);
     }
     
@@ -743,7 +748,7 @@ int main(int argc, char** argv) {
             }
 
             auto pt = read_all(in);
-            Bytes aad(aad_str.begin(), aad_str.end());
+            nocturne::Bytes aad(aad_str.begin(), aad_str.end());
 
             std::optional<std::filesystem::path> mac_key = mac_key_path.empty()?std::nullopt:std::optional<std::filesystem::path>(mac_key_path);
             ReplayDB rdb(replaydb_path.empty()?std::filesystem::path(std::string(std::getenv("HOME")?std::getenv("HOME"):".")) / ".nocturne" / "replaydb.bin": replaydb_path, mac_key);
@@ -802,17 +807,17 @@ int main(int argc, char** argv) {
             
             // Test key generation
             std::cout << "  Testing key generation...\n";
-            auto x25519_kp = gen_x25519();
-            auto ed25519_kp = gen_ed25519();
+            auto x25519_kp = nocturne::gen_x25519();
+            auto ed25519_kp = nocturne::gen_ed25519();
             std::cout << "    ✓ X25519 key generation\n";
             std::cout << "    ✓ Ed25519 key generation\n";
             
             // Test key derivation
             std::cout << "  Testing key derivation...\n";
-            auto alice = gen_x25519();
-            auto bob = gen_x25519();
-            auto client_tx = derive_tx_key_client(alice.pk, alice.sk, bob.pk);
-            auto server_rx = derive_rx_key_server(alice.pk, bob.pk, bob.sk);
+            auto alice = nocturne::gen_x25519();
+            auto bob = nocturne::gen_x25519();
+            auto client_tx = nocturne::derive_tx_key_client(alice.pk, alice.sk, bob.pk);
+            auto server_rx = nocturne::derive_rx_key_server(alice.pk, bob.pk, bob.sk);
             if (client_tx == server_rx) {
                 std::cout << "    ✓ Key derivation\n";
             } else {
@@ -821,8 +826,8 @@ int main(int argc, char** argv) {
             
             // Test encryption/decryption
             std::cout << "  Testing encryption/decryption...\n";
-            Bytes test_pt = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-            Bytes test_aad = {0xAA, 0xBB, 0xCC, 0xDD};
+            nocturne::Bytes test_pt = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+            nocturne::Bytes test_aad = {0xAA, 0xBB, 0xCC, 0xDD};
             auto encrypted = encrypt_packet(bob.pk, test_pt, test_aad, 0, false, nullptr, nullptr);
             auto decrypted = decrypt_packet(bob.pk, bob.sk, encrypted, std::nullopt, nullptr, std::nullopt);
             if (decrypted == test_pt) {
@@ -833,9 +838,9 @@ int main(int argc, char** argv) {
             
             // Test signatures
             std::cout << "  Testing digital signatures...\n";
-            Bytes test_msg = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-            auto sig = ed25519_sign(test_msg, ed25519_kp.sk);
-            if (ed25519_verify(test_msg, ed25519_kp.pk, sig)) {
+            nocturne::Bytes test_msg = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+            auto sig = nocturne::ed25519_sign(test_msg, ed25519_kp.sk);
+            if (nocturne::ed25519_verify(test_msg, ed25519_kp.pk, sig)) {
                 std::cout << "    ✓ Digital signatures\n";
             } else {
                 throw std::runtime_error("digital signature verification failed");
