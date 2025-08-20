@@ -49,7 +49,6 @@ endif()
 # Fuzzing target
 option(BUILD_FUZZER "Build fuzzer" OFF)
 if(BUILD_FUZZER)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=fuzzer,address,undefined")
     add_executable(nocturne-fuzzer tests/fuzzer_main.cpp)
     target_link_libraries(nocturne-fuzzer ${SODIUM_LIBRARIES})
     target_include_directories(nocturne-fuzzer PRIVATE ${SODIUM_INCLUDE_DIRS})
