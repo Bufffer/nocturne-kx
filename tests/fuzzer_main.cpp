@@ -3,8 +3,11 @@
 #include <array>
 #include <vector>
 #include <stdexcept>
+#include <cstring>
+#include <algorithm>
 
-// Include the main header
+// Include the main header but exclude main function
+#define NOCTURNE_FUZZER_BUILD
 #include "../nocturne-kx.cpp"
 
 using namespace nocturne;

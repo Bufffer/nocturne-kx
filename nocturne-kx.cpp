@@ -686,6 +686,7 @@ Notes:
 )";
 }
 
+#ifndef NOCTURNE_FUZZER_BUILD
 int main(int argc, char** argv) {
     try {
         nocturne::check_sodium();
@@ -979,3 +980,4 @@ int main(int argc, char** argv) {
         return 2;
     }
 }
+#endif // NOCTURNE_FUZZER_BUILD
