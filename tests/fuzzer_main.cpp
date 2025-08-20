@@ -5,6 +5,9 @@
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <random>
+#include <thread>
+#include <atomic>
 
 // Include the main header but exclude main function
 #define NOCTURNE_FUZZER_BUILD

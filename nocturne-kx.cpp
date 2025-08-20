@@ -20,7 +20,7 @@
 #include <sodium.h>
 
 // Platform-specific headers for side-channel protection
-#ifdef __x86_64__
+#ifdef __x86_64__ || defined(__i386__)
 #include <immintrin.h>
 #endif
 
@@ -76,9 +76,20 @@ namespace side_channel_protection {
     
     // Random delay to prevent timing attacks
     inline void random_delay() {
-        static thread_local std::mt19937 rng(std::random_device{}());
-        static thread_local std::uniform_int_distribution<int> dist(1, 100);
-        std::this_thread::sleep_for(std::chrono::microseconds(dist(rng)));
+        #if defined(__has_include) && __has_include(<thread>)
+            static thread_local std::mt19937 rng(std::random_device{}());
+            static thread_local std::uniform_int_distribution<int> dist(1, 100);
+            std::this_thread::sleep_for(std::chrono::microseconds(dist(rng)));
+        #else
+            // Portable fallback: busy wait with random iterations
+            static std::mt19937 rng(std::random_device{}());
+            static std::uniform_int_distribution<int> dist(100, 1000);
+            volatile int dummy = 0;
+            for (int i = 0; i < dist(rng); ++i) {
+                dummy += i;
+            }
+            (void)dummy; // Suppress unused variable warning
+        #endif
     }
     
     // Cache line flush to prevent cache attacks
@@ -86,7 +97,21 @@ namespace side_channel_protection {
         #if defined(__x86_64__) || defined(__i386__)
             _mm_clflush(ptr);
         #elif defined(__aarch64__)
-            __builtin_arm_dc_cvau(ptr);
+            // ARM64 cache flush - use portable approach if intrinsic not available
+            #ifdef __has_builtin
+                #if __has_builtin(__builtin_arm_dc_cvau)
+                    __builtin_arm_dc_cvau(ptr);
+                #else
+                    // Portable fallback: memory barrier
+                    std::atomic_thread_fence(std::memory_order_seq_cst);
+                #endif
+            #else
+                // Portable fallback: memory barrier
+                std::atomic_thread_fence(std::memory_order_seq_cst);
+            #endif
+        #else
+            // Portable fallback for other architectures
+            std::atomic_thread_fence(std::memory_order_seq_cst);
         #endif
     }
     
