@@ -111,16 +111,16 @@ inline Bytes serialize(const Packet& p) {
     out.reserve(1+1+4 + p.eph_pk.size() + p.nonce.size() + 8 + (p.ratchet_pk?crypto_kx_PUBLICKEYBYTES:0) + 4 + 4 + p.aad.size() + p.ciphertext.size() + (p.signature?crypto_sign_BYTES:0));
     out.push_back(p.version);
     out.push_back(p.flags);
-    write_u32_le(out, p.rotation_id);
+    nocturne::write_u32_le(out, p.rotation_id);
     out.insert(out.end(), p.eph_pk.begin(), p.eph_pk.end());
     out.insert(out.end(), p.nonce.begin(), p.nonce.end());
-    write_u64_le(out, p.counter);
+    nocturne::write_u64_le(out, p.counter);
     if (p.flags & FLAG_HAS_RATCHET) {
         if (!p.ratchet_pk) throw std::runtime_error("ratchet flag set but pk missing");
         out.insert(out.end(), p.ratchet_pk->begin(), p.ratchet_pk->end());
     }
-    write_u32_le(out, static_cast<uint32_t>(p.aad.size()));
-    write_u32_le(out, static_cast<uint32_t>(p.ciphertext.size()));
+    nocturne::write_u32_le(out, static_cast<uint32_t>(p.aad.size()));
+    nocturne::write_u32_le(out, static_cast<uint32_t>(p.ciphertext.size()));
     if (!p.aad.empty()) out.insert(out.end(), p.aad.begin(), p.aad.end());
     if (!p.ciphertext.empty()) out.insert(out.end(), p.ciphertext.begin(), p.ciphertext.end());
     if (p.flags & FLAG_HAS_SIG) {
@@ -140,10 +140,10 @@ inline Packet deserialize(const Bytes& in) {
     get(&p.version, 1);
     get(&p.flags,   1);
     uint8_t tmp4[4];
-    get(tmp4,4); p.rotation_id = read_u32_le(tmp4);
+    get(tmp4,4); p.rotation_id = nocturne::read_u32_le(tmp4);
     get(p.eph_pk.data(), p.eph_pk.size());
     get(p.nonce.data(),  p.nonce.size());
-    uint8_t tmp8[8]; get(tmp8,8); p.counter = read_u64_le(tmp8);
+    uint8_t tmp8[8]; get(tmp8,8); p.counter = nocturne::read_u64_le(tmp8);
 
     if (p.flags & FLAG_HAS_RATCHET) {
         std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rpk{};
@@ -151,10 +151,10 @@ inline Packet deserialize(const Bytes& in) {
         p.ratchet_pk = rpk;
     }
 
-    get(tmp4,4); uint32_t aad_len = read_u32_le(tmp4);
-    get(tmp4,4); uint32_t ct_len  = read_u32_le(tmp4);
+    get(tmp4,4); uint32_t aad_len = nocturne::read_u32_le(tmp4);
+    get(tmp4,4); uint32_t ct_len  = nocturne::read_u32_le(tmp4);
 
-    if (p.version != VERSION) throw std::runtime_error("unsupported version");
+    if (p.version != nocturne::VERSION) throw std::runtime_error("unsupported version");
 
     if (aad_len) { p.aad.resize(aad_len); get(p.aad.data(), aad_len); }
     if (ct_len)  { p.ciphertext.resize(ct_len); get(p.ciphertext.data(), ct_len); }
@@ -291,7 +291,7 @@ public:
     ReplayDB(std::filesystem::path p, const std::optional<std::filesystem::path>& keyfile = std::nullopt) : path(std::move(p)) {
         try { std::filesystem::create_directories(path.parent_path()); } catch(...){}
         if (keyfile && std::filesystem::exists(*keyfile)) {
-            auto k = read_all(*keyfile);
+            auto k = nocturne::read_all(*keyfile);
             if (k.size()==mac_key.size()) std::memcpy(mac_key.data(), k.data(), mac_key.size());
             else throw std::runtime_error("mac key size mismatch");
         } else {
@@ -305,13 +305,13 @@ public:
         std::lock_guard<std::mutex> lk(mu);
         m.clear();
         if (!std::filesystem::exists(path)) return;
-        auto raw = read_all(path);
+        auto raw = nocturne::read_all(path);
         if (raw.size() < 16) throw std::runtime_error("db too small or corrupted");
         // very simple container: [8B version LE][4B json_len LE][json bytes][mac (crypto_generichash_BYTES)]
         const uint8_t* p = raw.data();
         uint64_t file_version = read_u64_le(p);
         p += 8;
-        uint32_t json_len = read_u32_le(p);
+        uint32_t json_len = nocturne::read_u32_le(p);
         p += 4;
         if (raw.size() < 8 + 4 + json_len + crypto_generichash_BYTES) throw std::runtime_error("db truncated");
         const uint8_t* json_ptr = p; p += json_len;
@@ -342,8 +342,8 @@ public:
         uint32_t json_len = static_cast<uint32_t>(js.size());
 
         std::vector<uint8_t> buf; buf.reserve(8+4+json_len+crypto_generichash_BYTES);
-        write_u64_le(buf, ++version);
-        write_u32_le(buf, json_len);
+        nocturne::write_u64_le(buf, ++version);
+        nocturne::write_u32_le(buf, json_len);
         buf.insert(buf.end(), js.begin(), js.end());
         std::array<uint8_t, crypto_generichash_BYTES> mac{};
         if (crypto_generichash(mac.data(), mac.size(), buf.data(), 8 + 4 + json_len, mac_key.data(), mac_key.size()) != 0) throw std::runtime_error("mac calc failed");
@@ -410,7 +410,7 @@ class FileHSM : public HSMInterface {
     
 public:
     FileHSM(const std::filesystem::path &path) {
-        auto b = read_all(path);
+        auto b = nocturne::read_all(path);
         if (b.size() != crypto_sign_SECRETKEYBYTES) 
             throw std::runtime_error("filehsm sk size mismatch");
         std::memcpy(sk.data(), b.data(), sk.size());
@@ -467,9 +467,9 @@ nocturne::Bytes encrypt_packet(
     const std::string& session_id = "")
 {
     using namespace nocturne;
-    check_sodium();
+    nocturne::check_sodium();
 
-    auto eph = gen_x25519();
+    auto eph = nocturne::gen_x25519();
     auto key = derive_tx_key_client(eph.pk, eph.sk, receiver_x25519_pk);
 
     Packet p;
@@ -542,9 +542,9 @@ nocturne::Bytes decrypt_packet(
     const std::string& session_id = "")
 {
     using namespace nocturne;
-    check_sodium();
+    nocturne::check_sodium();
 
-    Packet p = deserialize(packet_bytes);
+    Packet p = nocturne::deserialize(packet_bytes);
 
     if (opt_expected_signer_ed25519_pk.has_value()) {
         if (!(p.flags & FLAG_HAS_SIG) || !p.signature) 
@@ -683,7 +683,7 @@ Notes:
 
 int main(int argc, char** argv) {
     try {
-        check_sodium();
+        nocturne::check_sodium();
         if (argc < 2) { usage(); return 1; }
         std::string cmd = argv[1];
 
@@ -691,7 +691,7 @@ int main(int argc, char** argv) {
             if (argc != 3) { usage(); return 1; }
             std::filesystem::path outdir = argv[2];
             std::filesystem::create_directories(outdir);
-            auto kp = gen_x25519();
+            auto kp = nocturne::gen_x25519();
             write_all_raw(outdir / "receiver_x25519_pk.bin", kp.pk.data(), kp.pk.size());
             write_all_raw(outdir / "receiver_x25519_sk.bin", kp.sk.data(), kp.sk.size());
             std::cout << "Wrote receiver keys to " << outdir << "
@@ -703,7 +703,7 @@ int main(int argc, char** argv) {
             if (argc != 3) { usage(); return 1; }
             std::filesystem::path outdir = argv[2];
             std::filesystem::create_directories(outdir);
-            auto kp = gen_ed25519();
+            auto kp = nocturne::gen_ed25519();
             write_all_raw(outdir / "sender_ed25519_pk.bin", kp.pk.data(), kp.pk.size());
             write_all_raw(outdir / "sender_ed25519_sk.bin", kp.sk.data(), kp.sk.size());
             std::cout << "Wrote signer keys to " << outdir << "
@@ -730,7 +730,7 @@ int main(int argc, char** argv) {
                 else throw std::runtime_error("unknown arg: " + a);
             }
             if (rxpk.empty() || in.empty() || out.empty()) throw std::runtime_error("missing required args");
-            auto rxpk_bytes = read_all(rxpk);
+            auto rxpk_bytes = nocturne::read_all(rxpk);
             if (rxpk_bytes.size() != crypto_kx_PUBLICKEYBYTES) throw std::runtime_error("receiver pk size mismatch");
             std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rxpk_arr{}; std::memcpy(rxpk_arr.data(), rxpk_bytes.data(), rxpk_arr.size());
 
@@ -744,7 +744,7 @@ int main(int argc, char** argv) {
                 }
             }
 
-            auto pt = read_all(in);
+            auto pt = nocturne::read_all(in);
             nocturne::Bytes aad(aad_str.begin(), aad_str.end());
 
             std::optional<std::filesystem::path> mac_key = mac_key_path.empty()?std::nullopt:std::optional<std::filesystem::path>(mac_key_path);
@@ -776,7 +776,7 @@ int main(int argc, char** argv) {
                 else throw std::runtime_error("unknown arg: " + a);
             }
             if (rxpk.empty() || rxsk.empty() || in.empty() || out.empty()) throw std::runtime_error("missing required args");
-            auto rxpk_b = read_all(rxpk); auto rxsk_b = read_all(rxsk);
+            auto rxpk_b = nocturne::read_all(rxpk); auto rxsk_b = nocturne::read_all(rxsk);
             if (rxpk_b.size()!=crypto_kx_PUBLICKEYBYTES) throw std::runtime_error("receiver pk size mismatch");
             if (rxsk_b.size()!=crypto_kx_SECRETKEYBYTES) throw std::runtime_error("receiver sk size mismatch");
             std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rxpk_arr{}; std::array<uint8_t, crypto_kx_SECRETKEYBYTES> rxsk_arr{};
@@ -784,7 +784,7 @@ int main(int argc, char** argv) {
 
             std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> expectpk_arr = std::nullopt;
             if (!expectpk_path.empty()) {
-                auto e = read_all(expectpk_path);
+                auto e = nocturne::read_all(expectpk_path);
                 if (e.size()!=crypto_sign_PUBLICKEYBYTES) throw std::runtime_error("expected signer pk size mismatch");
                 std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> tmp{}; std::memcpy(tmp.data(), e.data(), tmp.size()); expectpk_arr = tmp;
             }
@@ -793,7 +793,7 @@ int main(int argc, char** argv) {
             ReplayDB rdb(replaydb_path.empty()?std::filesystem::path(std::string(std::getenv("HOME")?std::getenv("HOME"):".")) / ".nocturne" / "replaydb.bin": replaydb_path, mac_key);
             ReplayDB* rdbp = replaydb_path.empty()?nullptr:&rdb;
 
-            auto pkt = read_all(in);
+            auto pkt = nocturne::read_all(in);
             auto pt = decrypt_packet(rxpk_arr, rxsk_arr, pkt, expectpk_arr, rdbp, min_rotation);
             write_all(out, pt);
             std::cout << "Decrypted -> " << out << " (" << pt.size() << " bytes)\n";
