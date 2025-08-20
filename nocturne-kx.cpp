@@ -291,7 +291,7 @@ public:
     ReplayDB(std::filesystem::path p, const std::optional<std::filesystem::path>& keyfile = std::nullopt) : path(std::move(p)) {
         try { std::filesystem::create_directories(path.parent_path()); } catch(...){}
         if (keyfile && std::filesystem::exists(*keyfile)) {
-            auto k = nocturne::read_all(*keyfile);
+            auto k = read_all(*keyfile);
             if (k.size()==mac_key.size()) std::memcpy(mac_key.data(), k.data(), mac_key.size());
             else throw std::runtime_error("mac key size mismatch");
         } else {
@@ -305,7 +305,7 @@ public:
         std::lock_guard<std::mutex> lk(mu);
         m.clear();
         if (!std::filesystem::exists(path)) return;
-        auto raw = nocturne::read_all(path);
+        auto raw = read_all(path);
         if (raw.size() < 16) throw std::runtime_error("db too small or corrupted");
         // very simple container: [8B version LE][4B json_len LE][json bytes][mac (crypto_generichash_BYTES)]
         const uint8_t* p = raw.data();
@@ -410,7 +410,7 @@ class FileHSM : public HSMInterface {
     
 public:
     FileHSM(const std::filesystem::path &path) {
-        auto b = nocturne::read_all(path);
+        auto b = read_all(path);
         if (b.size() != crypto_sign_SECRETKEYBYTES) 
             throw std::runtime_error("filehsm sk size mismatch");
         std::memcpy(sk.data(), b.data(), sk.size());
@@ -694,8 +694,7 @@ int main(int argc, char** argv) {
             auto kp = nocturne::gen_x25519();
             write_all_raw(outdir / "receiver_x25519_pk.bin", kp.pk.data(), kp.pk.size());
             write_all_raw(outdir / "receiver_x25519_sk.bin", kp.sk.data(), kp.sk.size());
-            std::cout << "Wrote receiver keys to " << outdir << "
-";
+            std::cout << "Wrote receiver keys to " << outdir << "\n";
             return 0;
         }
 
@@ -706,8 +705,7 @@ int main(int argc, char** argv) {
             auto kp = nocturne::gen_ed25519();
             write_all_raw(outdir / "sender_ed25519_pk.bin", kp.pk.data(), kp.pk.size());
             write_all_raw(outdir / "sender_ed25519_sk.bin", kp.sk.data(), kp.sk.size());
-            std::cout << "Wrote signer keys to " << outdir << "
-";
+            std::cout << "Wrote signer keys to " << outdir << "\n";
             return 0;
         }
 
@@ -730,7 +728,7 @@ int main(int argc, char** argv) {
                 else throw std::runtime_error("unknown arg: " + a);
             }
             if (rxpk.empty() || in.empty() || out.empty()) throw std::runtime_error("missing required args");
-            auto rxpk_bytes = nocturne::read_all(rxpk);
+            auto rxpk_bytes = read_all(rxpk);
             if (rxpk_bytes.size() != crypto_kx_PUBLICKEYBYTES) throw std::runtime_error("receiver pk size mismatch");
             std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rxpk_arr{}; std::memcpy(rxpk_arr.data(), rxpk_bytes.data(), rxpk_arr.size());
 
@@ -744,8 +742,8 @@ int main(int argc, char** argv) {
                 }
             }
 
-            auto pt = nocturne::read_all(in);
-            nocturne::Bytes aad(aad_str.begin(), aad_str.end());
+            auto pt = read_all(in);
+            Bytes aad(aad_str.begin(), aad_str.end());
 
             std::optional<std::filesystem::path> mac_key = mac_key_path.empty()?std::nullopt:std::optional<std::filesystem::path>(mac_key_path);
             ReplayDB rdb(replaydb_path.empty()?std::filesystem::path(std::string(std::getenv("HOME")?std::getenv("HOME"):".")) / ".nocturne" / "replaydb.bin": replaydb_path, mac_key);
@@ -753,8 +751,7 @@ int main(int argc, char** argv) {
 
             auto pkt = encrypt_packet(rxpk_arr, pt, aad, rotation_id, use_ratchet, signer.get(), rdbp);
             write_all(out, pkt);
-            std::cout << "Encrypted -> " << out << " (" << pkt.size() << " bytes)
-";
+            std::cout << "Encrypted -> " << out << " (" << pkt.size() << " bytes)\n";
             return 0;
         }
 
@@ -776,7 +773,7 @@ int main(int argc, char** argv) {
                 else throw std::runtime_error("unknown arg: " + a);
             }
             if (rxpk.empty() || rxsk.empty() || in.empty() || out.empty()) throw std::runtime_error("missing required args");
-            auto rxpk_b = nocturne::read_all(rxpk); auto rxsk_b = nocturne::read_all(rxsk);
+            auto rxpk_b = read_all(rxpk); auto rxsk_b = read_all(rxsk);
             if (rxpk_b.size()!=crypto_kx_PUBLICKEYBYTES) throw std::runtime_error("receiver pk size mismatch");
             if (rxsk_b.size()!=crypto_kx_SECRETKEYBYTES) throw std::runtime_error("receiver sk size mismatch");
             std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rxpk_arr{}; std::array<uint8_t, crypto_kx_SECRETKEYBYTES> rxsk_arr{};
@@ -784,7 +781,7 @@ int main(int argc, char** argv) {
 
             std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> expectpk_arr = std::nullopt;
             if (!expectpk_path.empty()) {
-                auto e = nocturne::read_all(expectpk_path);
+                auto e = read_all(expectpk_path);
                 if (e.size()!=crypto_sign_PUBLICKEYBYTES) throw std::runtime_error("expected signer pk size mismatch");
                 std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> tmp{}; std::memcpy(tmp.data(), e.data(), tmp.size()); expectpk_arr = tmp;
             }
@@ -793,7 +790,7 @@ int main(int argc, char** argv) {
             ReplayDB rdb(replaydb_path.empty()?std::filesystem::path(std::string(std::getenv("HOME")?std::getenv("HOME"):".")) / ".nocturne" / "replaydb.bin": replaydb_path, mac_key);
             ReplayDB* rdbp = replaydb_path.empty()?nullptr:&rdb;
 
-            auto pkt = nocturne::read_all(in);
+            auto pkt = read_all(in);
             auto pt = decrypt_packet(rxpk_arr, rxsk_arr, pkt, expectpk_arr, rdbp, min_rotation);
             write_all(out, pt);
             std::cout << "Decrypted -> " << out << " (" << pt.size() << " bytes)\n";
@@ -936,7 +933,7 @@ int main(int argc, char** argv) {
             std::cout << "System Information:\n";
             std::cout << "  Timestamp: " << std::chrono::system_clock::now().time_since_epoch().count() << "\n";
             std::cout << "  libsodium version: " << sodium_version_string() << "\n";
-            std::cout << "  Nocturne-KX version: " << static_cast<int>(VERSION) << "\n\n";
+            std::cout << "  Nocturne-KX version: " << static_cast<int>(nocturne::VERSION) << "\n\n";
             
             // Log security features
             std::cout << "Security Features:\n";
