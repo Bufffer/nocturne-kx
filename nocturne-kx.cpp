@@ -20,7 +20,7 @@
 #include <sodium.h>
 
 // Platform-specific headers for side-channel protection
-#ifdef __x86_64__ || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
 #endif
 
@@ -48,13 +48,7 @@
  The code compiles with C++23 and libsodium. See README and CI for build/test instructions.
 */
 
-namespace nocturne {
-
-constexpr uint8_t VERSION = 0x03;
-constexpr uint8_t FLAG_HAS_SIG = 0x01;
-constexpr uint8_t FLAG_HAS_RATCHET = 0x02;
-
-// Side-channel protection utilities
+// Side-channel protection utilities (global namespace for accessibility)
 namespace side_channel_protection {
     
     // Constant-time comparison to prevent timing attacks
@@ -154,6 +148,12 @@ namespace side_channel_protection {
         );
     }
 }
+
+namespace nocturne {
+
+constexpr uint8_t VERSION = 0x03;
+constexpr uint8_t FLAG_HAS_SIG = 0x01;
+constexpr uint8_t FLAG_HAS_RATCHET = 0x02;
 
 using Bytes = std::vector<uint8_t>;
 
