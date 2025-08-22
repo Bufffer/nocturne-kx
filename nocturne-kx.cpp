@@ -783,22 +783,21 @@ inline X25519KeyPair gen_x25519() {
 }
 
 inline Ed25519KeyPair gen_ed25519() {
-    // Use secure memory for key generation
-    memory_protection::SecureMemory<uint8_t> secure_sk(crypto_sign_SECRETKEYBYTES);
-    memory_protection::SecureMemory<uint8_t> secure_pk(crypto_sign_PUBLICKEYBYTES);
-    
-    // Generate key pair in secure memory
-    crypto_sign_keypair(secure_pk.get(), secure_sk.get());
-    
-    // Side-channel protection: flush cache and add random delay
-    side_channel_protection::flush_cache_line(secure_sk.get());
-    side_channel_protection::random_delay();
-    side_channel_protection::memory_barrier();
-    
-    // Copy to return value (will be zeroed by SecureMemory destructor)
+    // TEMPORARY FIX: Use simple key generation to debug the hanging issue
     Ed25519KeyPair kp;
-    std::memcpy(kp.pk.data(), secure_pk.get(), crypto_sign_PUBLICKEYBYTES);
-    std::memcpy(kp.sk.data(), secure_sk.get(), crypto_sign_SECRETKEYBYTES);
+    
+    // Generate key pair directly
+    crypto_sign_keypair(kp.pk.data(), kp.sk.data());
+    
+    // TODO: Re-enable secure memory and side-channel protection after fixing the issue
+    // memory_protection::SecureMemory<uint8_t> secure_sk(crypto_sign_SECRETKEYBYTES);
+    // memory_protection::SecureMemory<uint8_t> secure_pk(crypto_sign_PUBLICKEYBYTES);
+    // crypto_sign_keypair(secure_pk.get(), secure_sk.get());
+    // side_channel_protection::flush_cache_line(secure_sk.get());
+    // side_channel_protection::random_delay();
+    // side_channel_protection::memory_barrier();
+    // std::memcpy(kp.pk.data(), secure_pk.get(), crypto_sign_PUBLICKEYBYTES);
+    // std::memcpy(kp.sk.data(), secure_sk.get(), crypto_sign_SECRETKEYBYTES);
     
     return kp;
 }
