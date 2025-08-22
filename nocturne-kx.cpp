@@ -37,6 +37,12 @@
 #include <immintrin.h>
 #endif
 
+// MILITARY-GRADE SECURITY CONSTANTS (Global namespace for accessibility)
+constexpr size_t MAX_PACKET_SIZE = 1024 * 1024;      // 1MB maximum packet size
+constexpr size_t MAX_AAD_SIZE = 64 * 1024;           // 64KB maximum AAD size
+constexpr size_t MAX_CIPHERTEXT_SIZE = 1024 * 1024;  // 1MB maximum ciphertext size
+constexpr size_t MAX_ALLOCATION_SIZE = 100 * 1024 * 1024; // 100MB maximum allocation
+
 /*
  Nocturne-KX - hardened / near-military prototype v3
  ----------------------------------------------------
@@ -445,7 +451,7 @@ namespace memory_protection {
             if (size == 0) {
                 return nullptr;
             }
-            if (size > nocturne::MAX_ALLOCATION_SIZE) {
+            if (size > MAX_ALLOCATION_SIZE) {
                 throw std::runtime_error("allocation size exceeds maximum allowed");
             }
             
@@ -537,7 +543,7 @@ namespace memory_protection {
             if (size == 0) {
                 throw std::runtime_error("zero size allocation not allowed");
             }
-            if (size > nocturne::MAX_ALLOCATION_SIZE) {
+            if (size > MAX_ALLOCATION_SIZE) {
                 throw std::runtime_error("allocation size exceeds maximum allowed");
             }
             
@@ -738,12 +744,6 @@ namespace nocturne {
 constexpr uint8_t VERSION = 0x03;
 constexpr uint8_t FLAG_HAS_SIG = 0x01;
 constexpr uint8_t FLAG_HAS_RATCHET = 0x02;
-
-// SECURITY LIMITS: Prevent DoS and buffer overflow attacks
-constexpr size_t MAX_PACKET_SIZE = 1024 * 1024;  // 1MB maximum packet size
-constexpr size_t MAX_AAD_SIZE = 64 * 1024;       // 64KB maximum AAD size
-constexpr size_t MAX_CIPHERTEXT_SIZE = 1024 * 1024; // 1MB maximum ciphertext size
-constexpr size_t MAX_ALLOCATION_SIZE = 100 * 1024 * 1024; // 100MB maximum allocation
 
 using Bytes = std::vector<uint8_t>;
 
