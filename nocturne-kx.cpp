@@ -262,7 +262,6 @@ namespace rate_limiting {
             entry.timestamp = now;
             
             // Check burst limit
-            auto burst_window = std::chrono::milliseconds(config_.burst_window_ms);
             auto requests_in_burst = entry.request_count;
             
             if (requests_in_burst > config_.burst_limit) {
@@ -311,7 +310,6 @@ namespace rate_limiting {
                 return "No requests recorded";
             }
             
-            auto now = std::chrono::steady_clock::now();
             auto& entry = it->second;
             
             std::ostringstream oss;
@@ -393,6 +391,10 @@ namespace memory_protection {
             bool is_locked;
             bool is_encrypted;
             std::chrono::steady_clock::time_point allocation_time;
+            
+            // Default constructor for std::unordered_map compatibility
+            AllocationInfo() : ptr(nullptr), size(0), is_locked(false), is_encrypted(false),
+                              allocation_time(std::chrono::steady_clock::now()) {}
             
             AllocationInfo(void* p, size_t s, bool locked, bool encrypted)
                 : ptr(p), size(s), is_locked(locked), is_encrypted(encrypted),
