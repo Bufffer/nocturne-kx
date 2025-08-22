@@ -16,6 +16,9 @@
 #include <random>
 #include <thread>
 #include <atomic>
+#include <map>
+#include <algorithm>
+#include <functional>
 
 #include <sodium.h>
 
@@ -146,6 +149,213 @@ namespace side_channel_protection {
             reinterpret_cast<const uint8_t*>(b.data()), 
             a.size()
         );
+    }
+}
+
+// Rate limiting utilities for DoS and brute force protection
+namespace rate_limiting {
+    
+    // Rate limit configuration
+    struct RateLimitConfig {
+        uint32_t max_requests_per_minute = 60;      // Default: 60 requests per minute
+        uint32_t max_requests_per_hour = 1000;      // Default: 1000 requests per hour
+        uint32_t max_requests_per_day = 10000;      // Default: 10000 requests per day
+        uint32_t burst_limit = 10;                  // Default: 10 requests in burst
+        uint32_t burst_window_ms = 1000;           // Default: 1 second burst window
+        uint32_t penalty_duration_ms = 300000;     // Default: 5 minutes penalty
+        bool enable_exponential_backoff = true;     // Enable exponential backoff
+        uint32_t max_backoff_ms = 60000;           // Maximum backoff: 1 minute
+    };
+    
+    // Request tracking entry
+    struct RequestEntry {
+        std::chrono::steady_clock::time_point timestamp;
+        uint32_t request_count = 0;
+        uint32_t penalty_count = 0;
+        std::chrono::steady_clock::time_point last_penalty;
+        uint32_t current_backoff_ms = 0;
+        
+        RequestEntry() : timestamp(std::chrono::steady_clock::now()), 
+                        last_penalty(std::chrono::steady_clock::now()) {}
+    };
+    
+    // Rate limiter implementation
+    class RateLimiter {
+    private:
+        std::unordered_map<std::string, RequestEntry> request_history_;
+        std::mutex mutex_;
+        RateLimitConfig config_;
+        
+        // Clean up old entries to prevent memory leaks
+        void cleanup_old_entries() {
+            auto now = std::chrono::steady_clock::now();
+            auto day_ago = now - std::chrono::hours(24);
+            
+            for (auto it = request_history_.begin(); it != request_history_.end();) {
+                if (it->second.timestamp < day_ago) {
+                    it = request_history_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        
+        // Calculate exponential backoff
+        uint32_t calculate_backoff(uint32_t penalty_count) {
+            if (!config_.enable_exponential_backoff || penalty_count == 0) {
+                return 0;
+            }
+            
+            // Exponential backoff: 2^penalty_count * base_delay
+            uint32_t base_delay = 1000; // 1 second base
+            uint32_t backoff = base_delay * (1 << std::min(penalty_count, 10u)); // Cap at 2^10
+            
+            return std::min(backoff, config_.max_backoff_ms);
+        }
+        
+    public:
+        explicit RateLimiter(const RateLimitConfig& config = RateLimitConfig{}) 
+            : config_(config) {}
+        
+        // Check if request is allowed
+        bool allow_request(const std::string& identifier) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            
+            auto now = std::chrono::steady_clock::now();
+            auto& entry = request_history_[identifier];
+            
+            // Clean up old entries periodically
+            if (now - entry.timestamp > std::chrono::hours(1)) {
+                cleanup_old_entries();
+            }
+            
+            // Check if currently under penalty
+            if (entry.penalty_count > 0) {
+                auto time_since_penalty = now - entry.last_penalty;
+                auto penalty_duration = std::chrono::milliseconds(config_.penalty_duration_ms);
+                
+                if (time_since_penalty < penalty_duration) {
+                    // Still under penalty - apply backoff
+                    auto backoff_duration = std::chrono::milliseconds(entry.current_backoff_ms);
+                    if (time_since_penalty < backoff_duration) {
+                        return false; // Request blocked
+                    }
+                } else {
+                    // Penalty expired, reset
+                    entry.penalty_count = 0;
+                    entry.current_backoff_ms = 0;
+                }
+            }
+            
+            // Update request count and timestamp
+            entry.request_count++;
+            entry.timestamp = now;
+            
+            // Check burst limit
+            auto burst_window = std::chrono::milliseconds(config_.burst_window_ms);
+            auto requests_in_burst = entry.request_count;
+            
+            if (requests_in_burst > config_.burst_limit) {
+                // Burst limit exceeded - apply penalty
+                entry.penalty_count++;
+                entry.last_penalty = now;
+                entry.current_backoff_ms = calculate_backoff(entry.penalty_count);
+                return false;
+            }
+            
+            // Check rate limits
+            auto minute_ago = now - std::chrono::minutes(1);
+            auto hour_ago = now - std::chrono::hours(1);
+            auto day_ago = now - std::chrono::hours(24);
+            
+            uint32_t requests_last_minute = 0;
+            uint32_t requests_last_hour = 0;
+            uint32_t requests_last_day = 0;
+            
+            // Count requests in time windows (simplified - in production use sliding window)
+            if (entry.timestamp > minute_ago) requests_last_minute = entry.request_count;
+            if (entry.timestamp > hour_ago) requests_last_hour = entry.request_count;
+            if (entry.timestamp > day_ago) requests_last_day = entry.request_count;
+            
+            // Check limits
+            if (requests_last_minute > config_.max_requests_per_minute ||
+                requests_last_hour > config_.max_requests_per_hour ||
+                requests_last_day > config_.max_requests_per_day) {
+                
+                // Rate limit exceeded - apply penalty
+                entry.penalty_count++;
+                entry.last_penalty = now;
+                entry.current_backoff_ms = calculate_backoff(entry.penalty_count);
+                return false;
+            }
+            
+            return true; // Request allowed
+        }
+        
+        // Get current status for an identifier
+        std::string get_status(const std::string& identifier) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            
+            auto it = request_history_.find(identifier);
+            if (it == request_history_.end()) {
+                return "No requests recorded";
+            }
+            
+            auto now = std::chrono::steady_clock::now();
+            auto& entry = it->second;
+            
+            std::ostringstream oss;
+            oss << "Requests: " << entry.request_count 
+                << ", Penalties: " << entry.penalty_count
+                << ", Backoff: " << entry.current_backoff_ms << "ms";
+            
+            return oss.str();
+        }
+        
+        // Reset rate limiter for an identifier
+        void reset(const std::string& identifier) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            request_history_.erase(identifier);
+        }
+        
+        // Update configuration
+        void update_config(const RateLimitConfig& config) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            config_ = config;
+        }
+    };
+    
+    // Global rate limiter instance
+    static std::unique_ptr<RateLimiter> global_limiter = nullptr;
+    
+    // Initialize global rate limiter
+    inline void initialize(const RateLimitConfig& config = RateLimitConfig{}) {
+        if (!global_limiter) {
+            global_limiter = std::make_unique<RateLimiter>(config);
+        }
+    }
+    
+    // Check if request is allowed (global interface)
+    inline bool allow_request(const std::string& identifier) {
+        if (!global_limiter) {
+            initialize(); // Initialize with default config
+        }
+        return global_limiter->allow_request(identifier);
+    }
+    
+    // Get status (global interface)
+    inline std::string get_status(const std::string& identifier) {
+        if (!global_limiter) {
+            return "Rate limiter not initialized";
+        }
+        return global_limiter->get_status(identifier);
+    }
+    
+    // Reset (global interface)
+    inline void reset(const std::string& identifier) {
+        if (global_limiter) {
+            global_limiter->reset(identifier);
+        }
     }
 }
 
@@ -635,6 +845,16 @@ nocturne::Bytes encrypt_packet(
     using namespace nocturne;
     nocturne::check_sodium();
 
+    // Rate limiting: Check if encryption request is allowed
+    std::string rate_limit_id = "encrypt:" + hexify(receiver_x25519_pk.data(), receiver_x25519_pk.size());
+    if (!session_id.empty()) {
+        rate_limit_id += ":" + session_id;
+    }
+    
+    if (!rate_limiting::allow_request(rate_limit_id)) {
+        throw std::runtime_error("Rate limit exceeded for encryption operation");
+    }
+
     auto eph = nocturne::gen_x25519();
     auto key = derive_tx_key_client(eph.pk, eph.sk, receiver_x25519_pk);
 
@@ -717,6 +937,16 @@ nocturne::Bytes decrypt_packet(
 {
     using namespace nocturne;
     nocturne::check_sodium();
+
+    // Rate limiting: Check if decryption request is allowed
+    std::string rate_limit_id = "decrypt:" + hexify(receiver_x25519_pk.data(), receiver_x25519_pk.size());
+    if (!session_id.empty()) {
+        rate_limit_id += ":" + session_id;
+    }
+    
+    if (!rate_limiting::allow_request(rate_limit_id)) {
+        throw std::runtime_error("Rate limit exceeded for decryption operation");
+    }
 
     Packet p = nocturne::deserialize(packet_bytes);
 
@@ -850,6 +1080,12 @@ Subcommands:
 
   audit-log
       -> Displays a summary of security features and recommendations.
+
+  rate-limit-status <identifier>
+      -> Shows rate limiting status for a specific identifier.
+
+  rate-limit-reset <identifier>
+      -> Resets rate limiting for a specific identifier.
 
 Notes:
  - Replay DB: if provided, the DB path will be used and protected with a MAC key (preferably stored in HSM).
@@ -1123,7 +1359,8 @@ int main(int argc, char** argv) {
             std::cout << "  ✓ Replay protection with MAC\n";
             std::cout << "  ✓ Key rotation enforcement\n";
             std::cout << "  ✓ HSM integration support\n";
-            std::cout << "  ✓ Double Ratchet scaffolding\n\n";
+            std::cout << "  ✓ Double Ratchet scaffolding\n";
+            std::cout << "  ✓ Rate limiting protection\n\n";
             
             // Log warnings
             std::cout << "Security Warnings:\n";
@@ -1143,6 +1380,22 @@ int main(int argc, char** argv) {
             std::cout << "  6. Conduct penetration testing\n";
             std::cout << "  7. Follow secure development lifecycle\n";
             
+            return 0;
+        }
+
+        if (cmd == "rate-limit-status") {
+            if (argc != 3) { usage(); return 1; }
+            std::string identifier = argv[2];
+            std::cout << "Rate limiting status for '" << identifier << "':\n";
+            std::cout << "  " << rate_limiting::get_status(identifier) << "\n";
+            return 0;
+        }
+
+        if (cmd == "rate-limit-reset") {
+            if (argc != 3) { usage(); return 1; }
+            std::string identifier = argv[2];
+            rate_limiting::reset(identifier);
+            std::cout << "Rate limiting reset for '" << identifier << "'\n";
             return 0;
         }
 
