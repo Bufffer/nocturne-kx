@@ -380,6 +380,7 @@ namespace memory_protection {
         bool enable_memory_scrubbing = true;         // Scrub memory on deallocation
         bool enable_secure_heap = false;             // Use secure heap (if available)
         uint32_t max_secure_allocations = 1000;      // Maximum secure allocations
+        size_t max_total_memory = 100 * 1024 * 1024; // Maximum total memory (100MB)
     };
     
     // Secure memory allocator with protection features
@@ -444,7 +445,7 @@ namespace memory_protection {
             if (size == 0) {
                 return nullptr;
             }
-            if (size > MAX_ALLOCATION_SIZE) {
+            if (size > nocturne::MAX_ALLOCATION_SIZE) {
                 throw std::runtime_error("allocation size exceeds maximum allowed");
             }
             
@@ -536,7 +537,7 @@ namespace memory_protection {
             if (size == 0) {
                 throw std::runtime_error("zero size allocation not allowed");
             }
-            if (size > MAX_ALLOCATION_SIZE) {
+            if (size > nocturne::MAX_ALLOCATION_SIZE) {
                 throw std::runtime_error("allocation size exceeds maximum allowed");
             }
             
@@ -1358,7 +1359,17 @@ public:
         return pk;
     }
     
-    bool is_healthy() const override {
+    bool has_key(const std::string& label) override {
+        return initialized_ && label == key_label_;
+    }
+    
+    std::vector<uint8_t> generate_random(size_t length) override {
+        std::vector<uint8_t> random(length);
+        randombytes_buf(random.data(), length);
+        return random;
+    }
+    
+    bool is_healthy() override {
         return initialized_;
     }
     
