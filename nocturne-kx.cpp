@@ -20,6 +20,16 @@
 #include <algorithm>
 #include <functional>
 
+// Platform-specific headers for memory protection
+#ifdef _WIN32
+#include <windows.h>
+#include <memoryapi.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#include <fcntl.h>
+#endif
+
 #include <sodium.h>
 
 // Platform-specific headers for side-channel protection
@@ -359,6 +369,336 @@ namespace rate_limiting {
     }
 }
 
+// Memory protection utilities for advanced security
+namespace memory_protection {
+    
+    // Memory protection configuration
+    struct MemoryProtectionConfig {
+        bool enable_memory_locking = true;           // Lock sensitive memory in RAM
+        bool enable_secure_allocator = true;         // Use secure memory allocator
+        bool enable_memory_encryption = false;       // Encrypt sensitive memory (experimental)
+        bool enable_guard_pages = true;              // Add guard pages around sensitive data
+        size_t guard_page_size = 4096;               // Size of guard pages
+        bool enable_memory_scrubbing = true;         // Scrub memory on deallocation
+        bool enable_secure_heap = false;             // Use secure heap (if available)
+        uint32_t max_secure_allocations = 1000;      // Maximum secure allocations
+    };
+    
+    // Secure memory allocator with protection features
+    class SecureAllocator {
+    private:
+        struct AllocationInfo {
+            void* ptr;
+            size_t size;
+            bool is_locked;
+            bool is_encrypted;
+            std::chrono::steady_clock::time_point allocation_time;
+            
+            AllocationInfo(void* p, size_t s, bool locked, bool encrypted)
+                : ptr(p), size(s), is_locked(locked), is_encrypted(encrypted),
+                  allocation_time(std::chrono::steady_clock::now()) {}
+        };
+        
+        std::unordered_map<void*, AllocationInfo> allocations_;
+        std::mutex mutex_;
+        MemoryProtectionConfig config_;
+        size_t total_allocated_ = 0;
+        size_t allocation_count_ = 0;
+        
+        // Platform-specific memory locking
+        bool lock_memory(void* ptr, size_t size) {
+            #ifdef _WIN32
+                return VirtualLock(ptr, size) != 0;
+            #else
+                return mlock(ptr, size) == 0;
+            #endif
+        }
+        
+        // Platform-specific memory unlocking
+        bool unlock_memory(void* ptr, size_t size) {
+            #ifdef _WIN32
+                return VirtualUnlock(ptr, size) != 0;
+            #else
+                return munlock(ptr, size) == 0;
+            #endif
+        }
+        
+        // Platform-specific memory protection
+        bool protect_memory(void* ptr, size_t size, bool read_only) {
+            #ifdef _WIN32
+                DWORD old_protect;
+                DWORD new_protect = read_only ? PAGE_READONLY : PAGE_READWRITE;
+                return VirtualProtect(ptr, size, new_protect, &old_protect) != 0;
+            #else
+                int prot = PROT_READ;
+                if (!read_only) prot |= PROT_WRITE;
+                return mprotect(ptr, size, prot) == 0;
+            #endif
+        }
+        
+        // Allocate memory with guard pages
+        void* allocate_with_guards(size_t size) {
+            if (!config_.enable_guard_pages) {
+                return std::malloc(size);
+            }
+            
+            // Calculate total size including guard pages
+            size_t total_size = size + (2 * config_.guard_page_size);
+            
+            #ifdef _WIN32
+                // Allocate memory with guard pages
+                void* ptr = VirtualAlloc(nullptr, total_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+                if (!ptr) return nullptr;
+                
+                // Set guard pages
+                DWORD old_protect;
+                VirtualProtect(ptr, config_.guard_page_size, PAGE_NOACCESS, &old_protect);
+                VirtualProtect(static_cast<char*>(ptr) + total_size - config_.guard_page_size, 
+                              config_.guard_page_size, PAGE_NOACCESS, &old_protect);
+                
+                return static_cast<char*>(ptr) + config_.guard_page_size;
+            #else
+                // Allocate memory with guard pages
+                void* ptr = mmap(nullptr, total_size, PROT_READ | PROT_WRITE, 
+                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                if (ptr == MAP_FAILED) return nullptr;
+                
+                // Set guard pages
+                mprotect(ptr, config_.guard_page_size, PROT_NONE);
+                mprotect(static_cast<char*>(ptr) + total_size - config_.guard_page_size, 
+                        config_.guard_page_size, PROT_NONE);
+                
+                return static_cast<char*>(ptr) + config_.guard_page_size;
+            #endif
+        }
+        
+        // Free memory with guard pages
+        void free_with_guards(void* ptr) {
+            if (!config_.enable_guard_pages) {
+                std::free(ptr);
+                return;
+            }
+            
+            #ifdef _WIN32
+                void* base_ptr = static_cast<char*>(ptr) - config_.guard_page_size;
+                VirtualFree(base_ptr, 0, MEM_RELEASE);
+            #else
+                void* base_ptr = static_cast<char*>(ptr) - config_.guard_page_size;
+                munmap(base_ptr, config_.guard_page_size * 2 + get_allocation_size(ptr));
+            #endif
+        }
+        
+        // Get allocation size (simplified - in production use proper tracking)
+        size_t get_allocation_size(void* ptr) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = allocations_.find(ptr);
+            return (it != allocations_.end()) ? it->second.size : 0;
+        }
+        
+        // Scrub memory before deallocation
+        void scrub_memory(void* ptr, size_t size) {
+            if (!config_.enable_memory_scrubbing) return;
+            
+            // Use volatile to prevent compiler optimization
+            volatile uint8_t* p = static_cast<volatile uint8_t*>(ptr);
+            for (size_t i = 0; i < size; i++) {
+                p[i] = 0;
+            }
+            
+            // Force memory barrier
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+        }
+        
+    public:
+        explicit SecureAllocator(const MemoryProtectionConfig& config = MemoryProtectionConfig{})
+            : config_(config) {}
+        
+        // Allocate secure memory
+        void* allocate(size_t size) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            
+            // Check allocation limits
+            if (allocation_count_ >= config_.max_secure_allocations) {
+                throw std::runtime_error("Maximum secure allocations exceeded");
+            }
+            
+            // Allocate memory
+            void* ptr = config_.enable_guard_pages ? 
+                       allocate_with_guards(size) : std::malloc(size);
+            
+            if (!ptr) {
+                throw std::runtime_error("Secure memory allocation failed");
+            }
+            
+            // Lock memory if enabled
+            bool is_locked = false;
+            if (config_.enable_memory_locking) {
+                is_locked = lock_memory(ptr, size);
+                if (!is_locked) {
+                    // Log warning but continue
+                    std::cerr << "WARNING: Failed to lock memory in RAM" << std::endl;
+                }
+            }
+            
+            // Track allocation
+            allocations_[ptr] = AllocationInfo(ptr, size, is_locked, false);
+            total_allocated_ += size;
+            allocation_count_++;
+            
+            return ptr;
+        }
+        
+        // Deallocate secure memory
+        void deallocate(void* ptr) {
+            if (!ptr) return;
+            
+            std::lock_guard<std::mutex> lock(mutex_);
+            
+            auto it = allocations_.find(ptr);
+            if (it == allocations_.end()) {
+                // Not tracked - use standard free
+                std::free(ptr);
+                return;
+            }
+            
+            auto& info = it->second;
+            
+            // Scrub memory before deallocation
+            scrub_memory(ptr, info.size);
+            
+            // Unlock memory if it was locked
+            if (info.is_locked) {
+                unlock_memory(ptr, info.size);
+            }
+            
+            // Update statistics
+            total_allocated_ -= info.size;
+            allocation_count_--;
+            
+            // Remove from tracking
+            allocations_.erase(it);
+            
+            // Free memory
+            if (config_.enable_guard_pages) {
+                free_with_guards(ptr);
+            } else {
+                std::free(ptr);
+            }
+        }
+        
+        // Get allocation statistics
+        std::string get_stats() {
+            std::lock_guard<std::mutex> lock(mutex_);
+            
+            std::ostringstream oss;
+            oss << "Secure Allocator Stats:\n"
+                << "  Total allocated: " << total_allocated_ << " bytes\n"
+                << "  Active allocations: " << allocation_count_ << "\n"
+                << "  Memory locking: " << (config_.enable_memory_locking ? "enabled" : "disabled") << "\n"
+                << "  Guard pages: " << (config_.enable_guard_pages ? "enabled" : "disabled") << "\n"
+                << "  Memory scrubbing: " << (config_.enable_memory_scrubbing ? "enabled" : "disabled");
+            
+            return oss.str();
+        }
+        
+        // Update configuration
+        void update_config(const MemoryProtectionConfig& config) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            config_ = config;
+        }
+    };
+    
+    // Global secure allocator instance
+    static std::unique_ptr<SecureAllocator> global_allocator = nullptr;
+    
+    // Initialize global secure allocator
+    inline void initialize(const MemoryProtectionConfig& config = MemoryProtectionConfig{}) {
+        if (!global_allocator) {
+            global_allocator = std::make_unique<SecureAllocator>(config);
+        }
+    }
+    
+    // Allocate secure memory (global interface)
+    inline void* allocate_secure(size_t size) {
+        if (!global_allocator) {
+            initialize(); // Initialize with default config
+        }
+        return global_allocator->allocate(size);
+    }
+    
+    // Deallocate secure memory (global interface)
+    inline void deallocate_secure(void* ptr) {
+        if (global_allocator) {
+            global_allocator->deallocate(ptr);
+        }
+    }
+    
+    // Get statistics (global interface)
+    inline std::string get_stats() {
+        if (!global_allocator) {
+            return "Secure allocator not initialized";
+        }
+        return global_allocator->get_stats();
+    }
+    
+    // Secure memory wrapper for automatic management
+    template<typename T>
+    class SecureMemory {
+    private:
+        T* ptr_;
+        size_t size_;
+        
+    public:
+        SecureMemory(size_t count = 1) : size_(count * sizeof(T)) {
+            ptr_ = static_cast<T*>(allocate_secure(size_));
+        }
+        
+        ~SecureMemory() {
+            if (ptr_) {
+                deallocate_secure(ptr_);
+            }
+        }
+        
+        // Disable copy
+        SecureMemory(const SecureMemory&) = delete;
+        SecureMemory& operator=(const SecureMemory&) = delete;
+        
+        // Allow move
+        SecureMemory(SecureMemory&& other) noexcept 
+            : ptr_(other.ptr_), size_(other.size_) {
+            other.ptr_ = nullptr;
+            other.size_ = 0;
+        }
+        
+        SecureMemory& operator=(SecureMemory&& other) noexcept {
+            if (this != &other) {
+                if (ptr_) {
+                    deallocate_secure(ptr_);
+                }
+                ptr_ = other.ptr_;
+                size_ = other.size_;
+                other.ptr_ = nullptr;
+                other.size_ = 0;
+            }
+            return *this;
+        }
+        
+        // Access operators
+        T* get() { return ptr_; }
+        const T* get() const { return ptr_; }
+        T& operator*() { return *ptr_; }
+        const T& operator*() const { return *ptr_; }
+        T* operator->() { return ptr_; }
+        const T* operator->() const { return ptr_; }
+        T& operator[](size_t index) { return ptr_[index]; }
+        const T& operator[](size_t index) const { return ptr_[index]; }
+        
+        // Size information
+        size_t size() const { return size_ / sizeof(T); }
+        size_t size_bytes() const { return size_; }
+    };
+}
+
 namespace nocturne {
 
 constexpr uint8_t VERSION = 0x03;
@@ -382,25 +722,43 @@ inline void check_sodium() {
 }
 
 inline X25519KeyPair gen_x25519() {
-    X25519KeyPair kp;
-    crypto_kx_keypair(kp.pk.data(), kp.sk.data());
+    // Use secure memory for key generation
+    memory_protection::SecureMemory<uint8_t> secure_sk(crypto_kx_SECRETKEYBYTES);
+    memory_protection::SecureMemory<uint8_t> secure_pk(crypto_kx_PUBLICKEYBYTES);
+    
+    // Generate key pair in secure memory
+    crypto_kx_keypair(secure_pk.get(), secure_sk.get());
     
     // Side-channel protection: flush cache and add random delay
-    side_channel_protection::flush_cache_line(kp.sk.data());
+    side_channel_protection::flush_cache_line(secure_sk.get());
     side_channel_protection::random_delay();
     side_channel_protection::memory_barrier();
+    
+    // Copy to return value (will be zeroed by SecureMemory destructor)
+    X25519KeyPair kp;
+    std::memcpy(kp.pk.data(), secure_pk.get(), crypto_kx_PUBLICKEYBYTES);
+    std::memcpy(kp.sk.data(), secure_sk.get(), crypto_kx_SECRETKEYBYTES);
     
     return kp;
 }
 
 inline Ed25519KeyPair gen_ed25519() {
-    Ed25519KeyPair kp;
-    crypto_sign_keypair(kp.pk.data(), kp.sk.data());
+    // Use secure memory for key generation
+    memory_protection::SecureMemory<uint8_t> secure_sk(crypto_sign_SECRETKEYBYTES);
+    memory_protection::SecureMemory<uint8_t> secure_pk(crypto_sign_PUBLICKEYBYTES);
+    
+    // Generate key pair in secure memory
+    crypto_sign_keypair(secure_pk.get(), secure_sk.get());
     
     // Side-channel protection: flush cache and add random delay
-    side_channel_protection::flush_cache_line(kp.sk.data());
+    side_channel_protection::flush_cache_line(secure_sk.get());
     side_channel_protection::random_delay();
     side_channel_protection::memory_barrier();
+    
+    // Copy to return value (will be zeroed by SecureMemory destructor)
+    Ed25519KeyPair kp;
+    std::memcpy(kp.pk.data(), secure_pk.get(), crypto_sign_PUBLICKEYBYTES);
+    std::memcpy(kp.sk.data(), secure_sk.get(), crypto_sign_SECRETKEYBYTES);
     
     return kp;
 }
@@ -776,19 +1134,24 @@ struct HSMInterface {
 
 // Enhanced FileHSM with additional security features
 class FileHSM : public HSMInterface {
-    std::array<uint8_t, crypto_sign_SECRETKEYBYTES> sk{};
-    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> pk{};
+    memory_protection::SecureMemory<uint8_t> secure_sk_;
+    memory_protection::SecureMemory<uint8_t> secure_pk_;
     bool initialized_{false};
     
 public:
-    FileHSM(const std::filesystem::path &path) {
+    FileHSM(const std::filesystem::path &path) 
+        : secure_sk_(crypto_sign_SECRETKEYBYTES),
+          secure_pk_(crypto_sign_PUBLICKEYBYTES) {
+        
         auto b = read_all(path);
         if (b.size() != crypto_sign_SECRETKEYBYTES) 
             throw std::runtime_error("filehsm sk size mismatch");
-        std::memcpy(sk.data(), b.data(), sk.size());
         
-        // Derive public key from secret key
-        if (crypto_sign_ed25519_sk_to_pk(pk.data(), sk.data()) != 0)
+        // Copy secret key to secure memory
+        std::memcpy(secure_sk_.get(), b.data(), crypto_sign_SECRETKEYBYTES);
+        
+        // Derive public key from secret key in secure memory
+        if (crypto_sign_ed25519_sk_to_pk(secure_pk_.get(), secure_sk_.get()) != 0)
             throw std::runtime_error("failed to derive public key");
         
         initialized_ = true;
@@ -797,12 +1160,25 @@ public:
     std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
         if (!initialized_) throw std::runtime_error("FileHSM not initialized");
         nocturne::Bytes msg(data, data+len);
-        return nocturne::ed25519_sign(msg, sk);
+        
+        // Create temporary array for signing (will be zeroed automatically)
+        std::array<uint8_t, crypto_sign_SECRETKEYBYTES> temp_sk;
+        std::memcpy(temp_sk.data(), secure_sk_.get(), crypto_sign_SECRETKEYBYTES);
+        
+        auto result = nocturne::ed25519_sign(msg, temp_sk);
+        
+        // Zero the temporary array
+        side_channel_protection::secure_zero_memory(temp_sk.data(), temp_sk.size());
+        
+        return result;
     }
     
     std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() override {
         if (!initialized_) return std::nullopt;
-        return pk;
+        
+        std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> temp_pk;
+        std::memcpy(temp_pk.data(), secure_pk_.get(), crypto_sign_PUBLICKEYBYTES);
+        return temp_pk;
     }
     
     bool has_key(const std::string& label) override {
@@ -820,14 +1196,8 @@ public:
     }
     
     ~FileHSM() {
-        if (initialized_) {
-            // Side-channel protection: secure memory zeroing
-            side_channel_protection::secure_zero_memory(sk.data(), sk.size());
-            side_channel_protection::secure_zero_memory(pk.data(), pk.size());
-            side_channel_protection::flush_cache_line(sk.data());
-            side_channel_protection::flush_cache_line(pk.data());
-            side_channel_protection::memory_barrier();
-        }
+        // SecureMemory destructor automatically handles secure cleanup
+        // No manual cleanup needed - memory is automatically zeroed and freed
     }
 };
 
@@ -1086,6 +1456,9 @@ Subcommands:
 
   rate-limit-reset <identifier>
       -> Resets rate limiting for a specific identifier.
+
+  memory-stats
+      -> Shows secure memory allocation statistics.
 
 Notes:
  - Replay DB: if provided, the DB path will be used and protected with a MAC key (preferably stored in HSM).
@@ -1360,7 +1733,8 @@ int main(int argc, char** argv) {
             std::cout << "  ✓ Key rotation enforcement\n";
             std::cout << "  ✓ HSM integration support\n";
             std::cout << "  ✓ Double Ratchet scaffolding\n";
-            std::cout << "  ✓ Rate limiting protection\n\n";
+            std::cout << "  ✓ Rate limiting protection\n";
+            std::cout << "  ✓ Memory protection with secure allocator\n\n";
             
             // Log warnings
             std::cout << "Security Warnings:\n";
@@ -1396,6 +1770,13 @@ int main(int argc, char** argv) {
             std::string identifier = argv[2];
             rate_limiting::reset(identifier);
             std::cout << "Rate limiting reset for '" << identifier << "'\n";
+            return 0;
+        }
+
+        if (cmd == "memory-stats") {
+            if (argc != 2) { usage(); return 1; }
+            std::cout << "Secure Memory Statistics:\n";
+            std::cout << memory_protection::get_stats() << "\n";
             return 0;
         }
 
