@@ -494,8 +494,8 @@ namespace memory_protection {
             #endif
         }
         
-        // Free memory with guard pages
-        void free_with_guards(void* ptr) {
+        // Free memory with guard pages (caller supplies original allocation size to avoid nested locks)
+        void free_with_guards(void* ptr, size_t original_size) {
             if (!config_.enable_guard_pages) {
                 std::free(ptr);
                 return;
@@ -506,7 +506,7 @@ namespace memory_protection {
                 VirtualFree(base_ptr, 0, MEM_RELEASE);
             #else
                 void* base_ptr = static_cast<char*>(ptr) - config_.guard_page_size;
-                munmap(base_ptr, config_.guard_page_size * 2 + get_allocation_size(ptr));
+                munmap(base_ptr, config_.guard_page_size * 2 + original_size);
             #endif
         }
         
@@ -619,7 +619,7 @@ namespace memory_protection {
             
             // Free memory
             if (config_.enable_guard_pages) {
-                free_with_guards(ptr);
+                free_with_guards(ptr, info.size);
             } else {
                 std::free(ptr);
             }
@@ -1091,6 +1091,8 @@ class ReplayDB {
     uint64_t version{1};
 
     static std::string db_temp_path(const std::filesystem::path &p) { return p.string() + ".tmp"; }
+    // Persist to disk without re-entrantly taking the mutex (caller must hold mu)
+    void persist_unlocked();
 
 public:
     // mac_key can be loaded from HSM; here we allow a file-based key for demo purposes
@@ -1146,29 +1148,7 @@ public:
 
     void persist() {
         std::lock_guard<std::mutex> lk(mu);
-        // build json text
-        std::ostringstream oss;
-        for (auto &kv : m) oss << kv.first << ':' << kv.second << '\n';
-        std::string js = oss.str();
-        uint32_t json_len = static_cast<uint32_t>(js.size());
-
-        std::vector<uint8_t> buf; buf.reserve(8+4+json_len+crypto_generichash_BYTES);
-        nocturne::write_u64_le(buf, ++version);
-        nocturne::write_u32_le(buf, json_len);
-        buf.insert(buf.end(), js.begin(), js.end());
-        std::array<uint8_t, crypto_generichash_BYTES> mac{};
-        if (crypto_generichash(mac.data(), mac.size(), buf.data(), 8 + 4 + json_len, mac_key.data(), mac_key.size()) != 0) throw std::runtime_error("mac calc failed");
-        buf.insert(buf.end(), mac.begin(), mac.end());
-
-        std::string tmp = db_temp_path(path);
-        {
-            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-            if (!f) throw std::runtime_error("open tmp db failed");
-            f.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
-            f.flush();
-            if (!f) throw std::runtime_error("write tmp db failed");
-        }
-        std::filesystem::rename(tmp, path);
+        persist_unlocked();
     }
 
     uint64_t get(const std::string &hexpk) {
@@ -1180,13 +1160,49 @@ public:
     void set(const std::string &hexpk, uint64_t v) {
         std::lock_guard<std::mutex> lk(mu);
         m[hexpk]=v;
-        persist();
+        // Persist while holding the lock to keep DB state consistent, but avoid re-locking
+        persist_unlocked();
     }
 
     static uint64_t read_u64_le(const uint8_t* p) {
         uint64_t v=0; for (int i=0;i<8;i++) v |= (uint64_t)p[i] << (8*i); return v;
     }
 };
+
+// Internal helper for ReplayDB: write DB to disk without taking the mutex (caller holds lock)
+void ReplayDB::persist_unlocked() {
+    // build json text
+    std::ostringstream oss;
+    for (auto &kv : m) oss << kv.first << ':' << kv.second << '\n';
+    std::string js = oss.str();
+    uint32_t json_len = static_cast<uint32_t>(js.size());
+
+    std::vector<uint8_t> buf; buf.reserve(8+4+json_len+crypto_generichash_BYTES);
+    nocturne::write_u64_le(buf, ++version);
+    nocturne::write_u32_le(buf, json_len);
+    buf.insert(buf.end(), js.begin(), js.end());
+    std::array<uint8_t, crypto_generichash_BYTES> mac{};
+    if (crypto_generichash(mac.data(), mac.size(), buf.data(), 8 + 4 + json_len, mac_key.data(), mac_key.size()) != 0) throw std::runtime_error("mac calc failed");
+    buf.insert(buf.end(), mac.begin(), mac.end());
+
+    std::string tmp = db_temp_path(path);
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) throw std::runtime_error("open tmp db failed");
+        f.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
+        f.flush();
+        if (!f) throw std::runtime_error("write tmp db failed");
+    }
+    // On Windows, std::filesystem::rename throws if destination exists. Try overwrite semantics.
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
+        // Fallback: remove destination then rename
+        std::filesystem::remove(path, ec);
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) throw std::runtime_error("atomic rename failed: " + ec.message());
+    }
+}
 
 static std::string hexify(const uint8_t* p, size_t n) {
     static const char* hex = "0123456789abcdef";

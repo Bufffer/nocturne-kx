@@ -214,13 +214,12 @@ TEST_CASE("End-to-end encryption/decryption", "[e2e]") {
     }
     
     SECTION("Encryption with signature") {
-        FileHSM hsm("test_signer_sk.bin");
-        
-        // Create signer key file
+        // Create signer key file first
         {
             std::ofstream f("test_signer_sk.bin", std::ios::binary);
             f.write(reinterpret_cast<const char*>(sender.sk.data()), sender.sk.size());
         }
+        FileHSM hsm("test_signer_sk.bin");
         
         auto encrypted = encrypt_packet(receiver.pk, plaintext, aad, 0, false, &hsm, nullptr);
         REQUIRE(!encrypted.empty());
