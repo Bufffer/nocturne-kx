@@ -503,7 +503,7 @@ namespace audit_log {
         for (size_t i=0;i<n;i++) { unsigned v=p[i]; s.push_back(hex[v>>4]); s.push_back(hex[v&0xF]); }
         return s;
     }
-    inline std::string hex_from(const Hash32& h) { return hexify(h.data(), h.size()); }
+    inline std::string hex_from(const Hash32& h) { return hex_from(h.data(), h.size()); }
 
     class AuditLogger {
     private:
