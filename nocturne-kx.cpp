@@ -1880,24 +1880,28 @@ nocturne::Bytes encrypt_packet(
     p.ciphertext = aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
 
     if (signer) {
-        p.flags |= FLAG_HAS_SIG;
-        
         // Verify HSM health before signing
         if (!signer->is_healthy()) {
             throw std::runtime_error("HSM is not healthy");
         }
-        
+
+        // Build canonical bytes without signature flag or field
+        Packet unsigned_p = p;
+        unsigned_p.flags &= ~FLAG_HAS_SIG;
+        unsigned_p.signature = std::nullopt;
+
         Bytes to_sign;
-        auto ser_without_sig = serialize(p);
+        auto ser_without_sig = serialize(unsigned_p);
         to_sign.insert(to_sign.end(), ser_without_sig.begin(), ser_without_sig.end());
-        
+
         // Add session ID to signed data if provided
         if (!session_id.empty()) {
             to_sign.insert(to_sign.end(), session_id.begin(), session_id.end());
         }
-        
-            auto sig = signer->sign(to_sign.data(), to_sign.size());
-            p.signature = sig;
+
+        auto sig = signer->sign(to_sign.data(), to_sign.size());
+        p.flags |= FLAG_HAS_SIG;
+        p.signature = sig;
     }
 
     auto out = serialize(p);
