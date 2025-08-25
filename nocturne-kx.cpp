@@ -1293,7 +1293,8 @@ derive_rx_key_server(const std::array<uint8_t,crypto_kx_PUBLICKEYBYTES>& pk_send
     side_channel_protection::flush_cache_line(sk_receiver.data());
     side_channel_protection::random_delay();
     
-    auto k = derive_aead_key_from_session(rx.data(), rx.size(), "nocturne-rx-v3");
+    // Use the same context string as encryption side to ensure key equality
+    auto k = derive_aead_key_from_session(rx.data(), rx.size(), "nocturne-tx-v3");
     
     // Secure memory zeroing with side-channel protection
     side_channel_protection::secure_zero_memory(rx.data(), rx.size());
