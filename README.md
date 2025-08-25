@@ -210,3 +210,40 @@ MIT License — see `LICENSE`.
 ## Contact
 - Security issues: serdarogluibrahim@gmail.com
 - General questions: open a GitHub issue/discussion in this repository
+
+## Audit logging (signed, chained) and ReplayDB counter
+
+```bash
+# Enable audit log with Ed25519 signing and WORM output
+./nocturne-kx encrypt \
+  --rx-pk keys/receiver_x25519_pk.bin \
+  --audit-log logs/audit.jsonl \
+  --audit-sign-key keys/audit_ed25519_sk.bin \
+  --audit-worm-dir logs/worm \
+  --in message.txt \
+  --out encrypted.bin
+
+# Optionally include an external time anchor (e.g., RFC3161 TSA token blob)
+./nocturne-kx encrypt \
+  --rx-pk keys/receiver_x25519_pk.bin \
+  --audit-log logs/audit.jsonl \
+  --audit-sign-key keys/audit_ed25519_sk.bin \
+  --audit-anchor anchors/tsa_token.bin \
+  --in message.txt \
+  --out encrypted.bin
+
+# Use ReplayDB with external monotonic counter to detect rollback
+./nocturne-kx encrypt \
+  --rx-pk keys/receiver_x25519_pk.bin \
+  --replay-db state/replay.bin \
+  --mac-key state/replay.mac \
+  --tpm-counter state/tpm_counter.bin \
+  --in message.txt \
+  --out encrypted.bin
+```
+
+New flags:
+- `--audit-sign-key <path>`: Ed25519 SK for signing each audit entry's hash
+- `--audit-anchor <path>`: Optional external anchor blob to append as SECURITY record
+- `--audit-worm-dir <dir>`: Write append-only JSON files per record (best-effort read-only)
+- `--tpm-counter <path>`: External monotonic counter (8-byte LE); detects rollback and advances on persist
