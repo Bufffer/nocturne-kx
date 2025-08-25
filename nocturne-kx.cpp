@@ -1914,7 +1914,32 @@ int main(int argc, char** argv) {
     try {
         nocturne::check_sodium();
         if (argc < 2) { usage(); return 1; }
-        std::string cmd = argv[1];
+
+        // Global options
+        std::optional<std::filesystem::path> opt_rate_store = std::nullopt;
+        std::optional<std::filesystem::path> opt_audit_log = std::nullopt;
+        std::string opt_hsm_pass;
+
+        // Pre-scan args for global options and filter remaining into a vector
+        std::vector<std::string> args; args.reserve(argc-1);
+        for (int i=1;i<argc;++i) {
+            std::string a = argv[i];
+            auto need = [&](int){ if (i+1>=argc) throw std::runtime_error("missing value for " + a); return std::string(argv[++i]); };
+            if (a == "--rate-limit-store") { opt_rate_store = need(1); }
+            else if (a == "--audit-log") { opt_audit_log = need(1); }
+            else if (a == "--hsm-pass") { opt_hsm_pass = need(1); }
+            else { args.push_back(a); }
+        }
+
+        if (opt_audit_log) audit_log::initialize(opt_audit_log);
+        rate_limiting::initialize(rate_limiting::RateLimitConfig{}, opt_rate_store);
+        if (!opt_hsm_pass.empty()) {
+            // set env for current process (Windows-specific _putenv_s works via putenv on POSIX)
+            _putenv_s("NOCTURNE_HSM_PASSPHRASE", opt_hsm_pass.c_str());
+        }
+
+        if (args.empty()) { usage(); return 1; }
+        std::string cmd = args[0];
 
         if (cmd == "gen-receiver") {
             if (argc != 3) { usage(); return 1; }
