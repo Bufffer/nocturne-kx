@@ -115,36 +115,42 @@ namespace side_channel_protection {
     
     // Constant-time comparison to prevent timing attacks
     inline bool constant_time_compare(const uint8_t* a, const uint8_t* b, size_t len) {
-        volatile uint8_t result = 0;
-        for (size_t i = 0; i < len; i++) {
-            result |= a[i] ^ b[i];
-        }
-        return result == 0;
+        // Prefer libsodium's hardened memcmp if available
+        return sodium_memcmp(a, b, len) == 0;
     }
     
     // Constant-time memory zeroing
     inline void secure_zero_memory(void* ptr, size_t len) {
-        volatile uint8_t* p = static_cast<volatile uint8_t*>(ptr);
-        for (size_t i = 0; i < len; i++) {
-            p[i] = 0;
-        }
+        sodium_memzero(ptr, len);
+    }
+
+    // Constant-time utilities
+    inline uint32_t ct_mask(bool condition) {
+        // All-ones mask if true, 0 if false (branchless)
+        return static_cast<uint32_t>(0) - static_cast<uint32_t>(condition);
+    }
+
+    inline uint32_t ct_select_u32(uint32_t a, uint32_t b, bool pick_b) {
+        uint32_t m = ct_mask(pick_b);
+        return (a & ~m) | (b & m);
     }
     
     // Random delay to prevent timing attacks
     inline void random_delay() {
+        const char* env = std::getenv("NOCTURNE_DISABLE_RANDOM_DELAY");
+        if (env && *env) return;
         #if defined(__has_include) && __has_include(<thread>)
             static thread_local std::mt19937 rng(std::random_device{}());
-            static thread_local std::uniform_int_distribution<int> dist(1, 100);
+            static thread_local std::uniform_int_distribution<int> dist(1, 50);
             std::this_thread::sleep_for(std::chrono::microseconds(dist(rng)));
         #else
-            // Portable fallback: busy wait with random iterations
             static std::mt19937 rng(std::random_device{}());
-            static std::uniform_int_distribution<int> dist(100, 1000);
+            static std::uniform_int_distribution<int> dist(50, 200);
             volatile int dummy = 0;
             for (int i = 0; i < dist(rng); ++i) {
                 dummy += i;
             }
-            (void)dummy; // Suppress unused variable warning
+            (void)dummy;
         #endif
     }
     
