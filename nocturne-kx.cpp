@@ -482,57 +482,202 @@ namespace rate_limiting {
     }
 }
 
-// Structured audit logging (JSON Lines)
+// Structured audit logging (JSON Lines) with hash-chaining, optional signing, and anchoring
 namespace audit_log {
     enum class Severity { INFO, WARN, ERROR, SECURITY };
+
+    // 32-byte BLAKE2b hash
+    using Hash32 = std::array<uint8_t, 32>;
+
+    inline Hash32 blake2b_32(const std::vector<uint8_t>& data) {
+        Hash32 out{};
+        if (crypto_generichash(out.data(), out.size(), data.data(), data.size(), nullptr, 0) != 0) {
+            throw std::runtime_error("audit: hash failed");
+        }
+        return out;
+    }
+
+    inline std::string hex_from(const uint8_t* p, size_t n) {
+        static const char* hex = "0123456789abcdef";
+        std::string s; s.reserve(n*2);
+        for (size_t i=0;i<n;i++) { unsigned v=p[i]; s.push_back(hex[v>>4]); s.push_back(hex[v&0xF]); }
+        return s;
+    }
+    inline std::string hex_from(const Hash32& h) { return hexify(h.data(), h.size()); }
 
     class AuditLogger {
     private:
         std::mutex mu_;
         std::optional<std::filesystem::path> path_;
+        std::optional<std::filesystem::path> chain_path_;
+        std::optional<std::filesystem::path> worm_dir_;
+        Hash32 last_hash_{}; // zero for start-of-chain
+        bool have_last_ = false;
+
+        // Optional Ed25519 signing
+        bool sign_enabled_ = false;
+        std::array<uint8_t, crypto_sign_SECRETKEYBYTES> sk_{};
+        std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> pk_{};
+
+        void load_chain_state() {
+            if (!chain_path_ || !std::filesystem::exists(*chain_path_)) { have_last_ = false; return; }
+            std::ifstream f(*chain_path_, std::ios::binary);
+            if (!f) { have_last_ = false; return; }
+            f.read(reinterpret_cast<char*>(last_hash_.data()), static_cast<std::streamsize>(last_hash_.size()));
+            have_last_ = f.gcount() == static_cast<std::streamsize>(last_hash_.size());
+        }
+
+        void save_chain_state() {
+            if (!chain_path_) return;
+            std::ofstream f(*chain_path_, std::ios::binary | std::ios::trunc);
+            if (!f) return;
+            f.write(reinterpret_cast<const char*>(last_hash_.data()), static_cast<std::streamsize>(last_hash_.size()));
+        }
+
+        static const char* sev_str(Severity s) {
+            switch(s) { case Severity::INFO: return "INFO"; case Severity::WARN: return "WARN"; case Severity::ERROR: return "ERROR"; default: return "SECURITY"; }
+        }
+
+        // Build canonical bytes for hashing: prev||ts||sev||cat||sub||msg (with separators)
+        static std::vector<uint8_t> canonical_bytes(const Hash32& prev,
+                                                    int64_t ts_ms,
+                                                    Severity sev,
+                                                    const std::string& cat,
+                                                    const std::string& sub,
+                                                    const std::string& msg) {
+            std::vector<uint8_t> b;
+            b.insert(b.end(), prev.begin(), prev.end());
+            auto put64 = [&](uint64_t v){ for(int i=0;i<8;i++) b.push_back(static_cast<uint8_t>((v>>(8*i))&0xFF)); };
+            put64(static_cast<uint64_t>(ts_ms));
+            b.push_back(static_cast<uint8_t>(sev));
+            b.push_back(0);
+            b.insert(b.end(), cat.begin(), cat.end()); b.push_back(0);
+            b.insert(b.end(), sub.begin(), sub.end()); b.push_back(0);
+            b.insert(b.end(), msg.begin(), msg.end());
+            return b;
+        }
+
+        static void json_escape(std::ostream& f, const std::string& s) {
+            for (char c : s) { if (c=='"') f << '\\'; f << c; }
+        }
+
+        void maybe_anchor_from_file_unlocked(const std::optional<std::filesystem::path>& anchor_file) {
+            if (!anchor_file || !std::filesystem::exists(*anchor_file)) return;
+            try {
+                std::ifstream af(*anchor_file, std::ios::binary);
+                std::vector<uint8_t> buf((std::istreambuf_iterator<char>(af)), std::istreambuf_iterator<char>());
+                std::string anchor_hex = hex_from(buf.data(), buf.size());
+                append_record_unlocked(Severity::SECURITY, "ANCHOR", "TSA", anchor_hex);
+            } catch (...) { /* ignore anchor errors */ }
+        }
+
+        void append_record_unlocked(Severity sev, const std::string& category, const std::string& subject, const std::string& message) {
+            if (!path_) return;
+            std::filesystem::create_directories(path_->parent_path());
+            std::ofstream f(*path_, std::ios::app);
+            if (!f) return;
+            auto now = std::chrono::system_clock::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+
+            Hash32 prev = have_last_ ? last_hash_ : Hash32{};
+            auto canon = canonical_bytes(prev, ms, sev, category, subject, message);
+            Hash32 h = blake2b_32(canon);
+
+            // Optional signature of hash
+            std::array<uint8_t, crypto_sign_BYTES> sig{};
+            bool have_sig = false;
+            if (sign_enabled_) {
+                unsigned long long siglen = 0;
+                if (crypto_sign_detached(sig.data(), &siglen, h.data(), h.size(), sk_.data()) == 0 && siglen == crypto_sign_BYTES) {
+                    have_sig = true;
+                }
+            }
+
+            // JSON line
+            std::ostringstream json;
+            json << "{\"ts\":" << ms
+              << ",\"sev\":\"" << sev_str(sev) << "\""
+              << ",\"cat\":\"" << category << "\""
+              << ",\"sub\":\"" << subject << "\""
+              << ",\"msg\":\""; json_escape(json, message); json << "\""
+              << ",\"prev\":\"" << hex_from(prev) << "\""
+              << ",\"hash\":\"" << hex_from(h) << "\"";
+            if (have_sig) {
+                json << ",\"sig\":\"" << hex_from(sig.data(), sig.size()) << "\""
+                    << ",\"pub\":\"" << hex_from(pk_.data(), pk_.size()) << "\"";
+            }
+            json << "}";
+
+            f << json.str() << '\n';
+
+            // Optional WORM segment writing (append-only directory with one-file-per-entry)
+            if (worm_dir_) {
+                try {
+                    std::filesystem::create_directories(*worm_dir_);
+                    std::string fname = std::to_string(ms) + "-" + hex_from(h).substr(0, 16) + ".json";
+                    auto outp = *worm_dir_ / fname;
+                    std::ofstream wf(outp, std::ios::binary | std::ios::trunc);
+                    if (wf) {
+                        auto s = json.str();
+                        wf.write(s.data(), static_cast<std::streamsize>(s.size()));
+                        wf.flush();
+                        // set read-only (best effort)
+                        std::error_code ecp;
+                        auto p = std::filesystem::status(outp, ecp).permissions();
+                        (void)p;
+                        std::filesystem::permissions(outp, std::filesystem::perms::owner_write, std::filesystem::perm_options::remove, ecp);
+                    }
+                } catch (...) { /* ignore WORM errors */ }
+            }
+
+            last_hash_ = h; have_last_ = true; save_chain_state();
+        }
+
     public:
-        explicit AuditLogger(const std::optional<std::filesystem::path>& path): path_(path) {}
+        explicit AuditLogger(const std::optional<std::filesystem::path>& path,
+                             const std::optional<std::filesystem::path>& key_path,
+                             const std::optional<std::filesystem::path>& anchor_file,
+                             const std::optional<std::filesystem::path>& worm_dir)
+            : path_(path), worm_dir_(worm_dir) {
+            if (path_) {
+                chain_path_ = *path_;
+                chain_path_->concat(".chain");
+                load_chain_state();
+            }
+            if (key_path && std::filesystem::exists(*key_path)) {
+                std::ifstream kf(*key_path, std::ios::binary);
+                std::vector<uint8_t> kb((std::istreambuf_iterator<char>(kf)), std::istreambuf_iterator<char>());
+                if (kb.size() == crypto_sign_SECRETKEYBYTES) {
+                    std::memcpy(sk_.data(), kb.data(), kb.size());
+                    if (crypto_sign_ed25519_sk_to_pk(pk_.data(), sk_.data()) == 0) {
+                        sign_enabled_ = true;
+                    }
+                }
+            }
+            if (anchor_file) {
+                std::lock_guard<std::mutex> lk(mu_);
+                maybe_anchor_from_file_unlocked(anchor_file);
+            }
+        }
 
         void log(Severity sev, const std::string& category, const std::string& subject, const std::string& message) {
-            if (!path_) return;
             std::lock_guard<std::mutex> lk(mu_);
-            try {
-                std::filesystem::create_directories(path_->parent_path());
-                std::ofstream f(*path_, std::ios::app);
-                if (!f) return;
-                auto now = std::chrono::system_clock::now();
-                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-                const char* sev_s = (sev==Severity::INFO?"INFO":sev==Severity::WARN?"WARN":sev==Severity::ERROR?"ERROR":"SECURITY");
-                // Very small JSON object per line
-                f << "{\"ts\":" << ms
-                  << ",\"sev\":\"" << sev_s << "\""
-                  << ",\"cat\":\"" << category << "\""
-                  << ",\"sub\":\"" << subject << "\""
-                  << ",\"msg\":\"";
-                // Escape quotes in message
-                for (char c : message) { if (c=='"') f << '\\'; f << c; }
-                f << "\"}" << '\n';
-            } catch (...) { /* ignore */ }
+            append_record_unlocked(sev, category, subject, message);
         }
     };
 
     static std::unique_ptr<AuditLogger> global_logger = nullptr;
 
-    inline void initialize(const std::optional<std::filesystem::path>& path = std::nullopt) {
-        if (!global_logger) global_logger = std::make_unique<AuditLogger>(path);
+    inline void initialize(const std::optional<std::filesystem::path>& path = std::nullopt,
+                           const std::optional<std::filesystem::path>& key_path = std::nullopt,
+                           const std::optional<std::filesystem::path>& anchor_file = std::nullopt,
+                           const std::optional<std::filesystem::path>& worm_dir = std::nullopt) {
+        if (!global_logger) global_logger = std::make_unique<AuditLogger>(path, key_path, anchor_file, worm_dir);
     }
-    inline void info(const std::string& cat, const std::string& sub, const std::string& msg) {
-        if (!global_logger) return; global_logger->log(Severity::INFO, cat, sub, msg);
-    }
-    inline void warn(const std::string& cat, const std::string& sub, const std::string& msg) {
-        if (!global_logger) return; global_logger->log(Severity::WARN, cat, sub, msg);
-    }
-    inline void error(const std::string& cat, const std::string& sub, const std::string& msg) {
-        if (!global_logger) return; global_logger->log(Severity::ERROR, cat, sub, msg);
-    }
-    inline void security(const std::string& cat, const std::string& sub, const std::string& msg) {
-        if (!global_logger) return; global_logger->log(Severity::SECURITY, cat, sub, msg);
-    }
+    inline void info(const std::string& cat, const std::string& sub, const std::string& msg) { if (!global_logger) return; global_logger->log(Severity::INFO, cat, sub, msg); }
+    inline void warn(const std::string& cat, const std::string& sub, const std::string& msg) { if (!global_logger) return; global_logger->log(Severity::WARN, cat, sub, msg); }
+    inline void error(const std::string& cat, const std::string& sub, const std::string& msg) { if (!global_logger) return; global_logger->log(Severity::ERROR, cat, sub, msg); }
+    inline void security(const std::string& cat, const std::string& sub, const std::string& msg) { if (!global_logger) return; global_logger->log(Severity::SECURITY, cat, sub, msg); }
 }
 
 // Memory protection utilities for advanced security
@@ -1252,6 +1397,8 @@ class ReplayDB {
     std::array<uint8_t, crypto_generichash_KEYBYTES> mac_key{}; // key to MAC DB (should be stored in HSM in real deployments)
     std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> enc_key{}; // key to encrypt DB metadata
     uint64_t version{1};
+    // Optional external monotonic counter (TPM/file bridge) path
+    std::optional<std::filesystem::path> tpm_counter_path_{};
 
     static std::string db_temp_path(const std::filesystem::path &p) { return p.string() + ".tmp"; }
     // Persist to disk without re-entrantly taking the mutex (caller must hold mu)
@@ -1271,7 +1418,8 @@ class ReplayDB {
 
 public:
     // mac_key can be loaded from HSM; here we allow a file-based key for demo purposes
-    ReplayDB(std::filesystem::path p, const std::optional<std::filesystem::path>& keyfile = std::nullopt) : path(std::move(p)) {
+    ReplayDB(std::filesystem::path p, const std::optional<std::filesystem::path>& keyfile = std::nullopt,
+             const std::optional<std::filesystem::path>& tpm_counter_path = std::nullopt) : path(std::move(p)), tpm_counter_path_(tpm_counter_path) {
         try { std::filesystem::create_directories(path.parent_path()); } catch(...){}
         if (keyfile && std::filesystem::exists(*keyfile)) {
             auto k = read_all(*keyfile);
@@ -1296,6 +1444,18 @@ public:
         const uint8_t* p = raw.data();
         uint64_t file_version = read_u64_le(p); p += 8;
         bool is_encrypted = (file_version & (1ULL<<63)) != 0;
+        // External monotonic counter verification
+        if (tpm_counter_path_ && std::filesystem::exists(*tpm_counter_path_)) {
+            auto cbuf = read_all(*tpm_counter_path_);
+            if (cbuf.size() >= 8) {
+                uint64_t tpm_v = read_u64_le(cbuf.data());
+                uint64_t fv_plain = (file_version & ~(1ULL<<63));
+                if (fv_plain < tpm_v) {
+                    audit_log::security("ReplayDB", "rollback", "External monotonic counter indicates rollback");
+                    throw std::runtime_error("replaydb rollback detected by external counter");
+                }
+            }
+        }
         std::string json_s;
         if (!is_encrypted) {
             // Legacy format: [8B version][4B json_len][json][mac]
@@ -1434,6 +1594,29 @@ void ReplayDB::persist_unlocked() {
         std::filesystem::remove(path, ec);
         std::filesystem::rename(tmp, path, ec);
         if (ec) throw std::runtime_error("atomic rename failed: " + ec.message());
+    }
+    // Update external monotonic counter if configured
+    if (tpm_counter_path_) {
+        try {
+            std::string ctmp = tpm_counter_path_->string() + ".tmp";
+            std::vector<uint8_t> buf; buf.reserve(8);
+            nocturne::write_u64_le(buf, v);
+            {
+                std::ofstream f(ctmp, std::ios::binary | std::ios::trunc);
+                if (f) {
+                    f.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
+                    f.flush();
+                }
+            }
+            std::error_code ec2;
+            std::filesystem::rename(ctmp, *tpm_counter_path_, ec2);
+            if (ec2) {
+                std::filesystem::remove(*tpm_counter_path_, ec2);
+                std::filesystem::rename(ctmp, *tpm_counter_path_, ec2);
+            }
+        } catch (...) {
+            audit_log::warn("ReplayDB", "counter", "Failed to update external monotonic counter");
+        }
     }
 }
 
@@ -1918,6 +2101,9 @@ int main(int argc, char** argv) {
         // Global options
         std::optional<std::filesystem::path> opt_rate_store = std::nullopt;
         std::optional<std::filesystem::path> opt_audit_log = std::nullopt;
+        std::optional<std::filesystem::path> opt_audit_sign_key = std::nullopt; // Ed25519 sk for audit signing
+        std::optional<std::filesystem::path> opt_audit_anchor = std::nullopt;   // External anchor blob (e.g., TSA token)
+        std::optional<std::filesystem::path> opt_tpm_counter = std::nullopt;    // External monotonic counter path
         std::string opt_hsm_pass;
 
         // Pre-scan args for global options and filter remaining into a vector
@@ -1927,11 +2113,23 @@ int main(int argc, char** argv) {
             auto need = [&](int){ if (i+1>=argc) throw std::runtime_error("missing value for " + a); return std::string(argv[++i]); };
             if (a == "--rate-limit-store") { opt_rate_store = need(1); }
             else if (a == "--audit-log") { opt_audit_log = need(1); }
+            else if (a == "--audit-sign-key") { opt_audit_sign_key = need(1); }
+            else if (a == "--audit-anchor") { opt_audit_anchor = need(1); }
+            else if (a == "--audit-worm-dir") { opt_audit_anchor = need(1); /* temp capture; wired below */ }
+            else if (a == "--tpm-counter") { opt_tpm_counter = need(1); }
             else if (a == "--hsm-pass") { opt_hsm_pass = need(1); }
             else { args.push_back(a); }
         }
 
-        if (opt_audit_log) audit_log::initialize(opt_audit_log);
+        // Parse optional WORM dir from args (simple pass-through via environment for now)
+        std::optional<std::filesystem::path> opt_audit_worm_dir = std::nullopt;
+        for (size_t i = 2; i + 1 < static_cast<size_t>(argc); ++i) {
+            if (std::string(argv[i]) == "--audit-worm-dir") {
+                opt_audit_worm_dir = std::filesystem::path(argv[i+1]);
+            }
+        }
+
+        if (opt_audit_log) audit_log::initialize(opt_audit_log, opt_audit_sign_key, opt_audit_anchor, opt_audit_worm_dir);
         rate_limiting::initialize(rate_limiting::RateLimitConfig{}, opt_rate_store);
         if (!opt_hsm_pass.empty()) {
             // Set env for current process (portable)
@@ -2089,7 +2287,7 @@ int main(int argc, char** argv) {
             nocturne::Bytes aad(aad_str.begin(), aad_str.end());
 
             std::optional<std::filesystem::path> mac_key = mac_key_path.empty()?std::nullopt:std::optional<std::filesystem::path>(mac_key_path);
-            ReplayDB rdb(replaydb_path.empty()?std::filesystem::path(std::string(std::getenv("HOME")?std::getenv("HOME"):".")) / ".nocturne" / "replaydb.bin": replaydb_path, mac_key);
+            ReplayDB rdb(replaydb_path.empty()?std::filesystem::path(std::string(std::getenv("HOME")?std::getenv("HOME"):".")) / ".nocturne" / "replaydb.bin": replaydb_path, mac_key, opt_tpm_counter);
             ReplayDB* rdbp = replaydb_path.empty()?nullptr:&rdb;
 
             auto pkt = encrypt_packet(rxpk_arr, pt, aad, rotation_id, use_ratchet, signer.get(), rdbp);
@@ -2130,7 +2328,7 @@ int main(int argc, char** argv) {
             }
 
             std::optional<std::filesystem::path> mac_key = mac_key_path.empty()?std::nullopt:std::optional<std::filesystem::path>(mac_key_path);
-            ReplayDB rdb(replaydb_path.empty()?std::filesystem::path(std::string(std::getenv("HOME")?std::getenv("HOME"):".")) / ".nocturne" / "replaydb.bin": replaydb_path, mac_key);
+            ReplayDB rdb(replaydb_path.empty()?std::filesystem::path(std::string(std::getenv("HOME")?std::getenv("HOME"):".")) / ".nocturne" / "replaydb.bin": replaydb_path, mac_key, opt_tpm_counter);
             ReplayDB* rdbp = replaydb_path.empty()?nullptr:&rdb;
 
             auto pkt = read_all(in);
