@@ -22,7 +22,7 @@ pkg_check_modules(SODIUM REQUIRED libsodium)
 
 # Main executable (only build when not building fuzzer)
 if(NOT BUILD_FUZZER)
-    add_executable(nocturne-kx nocturne-kx.cpp)
+    add_executable(nocturne-kx nocturne-kx.cpp src/double_ratchet.hpp)
     target_include_directories(nocturne-kx PRIVATE ${SODIUM_INCLUDE_DIRS})
     target_link_libraries(nocturne-kx ${SODIUM_LIBRARIES})
     target_compile_options(nocturne-kx PRIVATE ${SODIUM_CFLAGS_OTHER})

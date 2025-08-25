@@ -7,6 +7,8 @@
 #include <queue>
 #include <unordered_map>
 #include <vector>
+#include <chrono>
+#include <sodium.h>
 
 namespace nocturne {
 
@@ -132,6 +134,308 @@ private:
     void generate_new_dh_keypair();
     void zero_memory(void* ptr, size_t size);
 };
+
+// ===== DoubleRatchet inline implementation =====
+
+inline void DoubleRatchet::zero_memory(void* ptr, size_t size) {
+    volatile uint8_t* p = static_cast<volatile uint8_t*>(ptr);
+    for (size_t i = 0; i < size; ++i) p[i] = 0;
+}
+
+inline std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>
+DoubleRatchet::derive_chain_key(
+    const std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>& input_key,
+    const std::string& info
+) {
+    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> out{};
+    if (crypto_generichash(out.data(), out.size(),
+            input_key.data(), input_key.size(),
+            reinterpret_cast<const unsigned char*>(info.data()), info.size()) != 0) {
+        throw std::runtime_error("derive_chain_key failed");
+    }
+    return out;
+}
+
+inline std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>
+DoubleRatchet::derive_message_key(
+    const std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>& chain_key
+) {
+    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> out{};
+    if (crypto_generichash(out.data(), out.size(),
+            chain_key.data(), chain_key.size(),
+            reinterpret_cast<const unsigned char*>("nocturne-dr-msg"), sizeof("nocturne-dr-msg") - 1) != 0) {
+        throw std::runtime_error("derive_message_key failed");
+    }
+    return out;
+}
+
+inline void DoubleRatchet::derive_root_key(const std::array<uint8_t, crypto_scalarmult_BYTES>& dh_shared) {
+    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> mixed{};
+    std::vector<uint8_t> seed;
+    seed.insert(seed.end(), state_.root_key.begin(), state_.root_key.end());
+    seed.insert(seed.end(), dh_shared.begin(), dh_shared.end());
+    if (crypto_generichash(mixed.data(), mixed.size(), seed.data(), seed.size(),
+            reinterpret_cast<const unsigned char*>("nocturne-dr-root"), sizeof("nocturne-dr-root") - 1) != 0) {
+        throw std::runtime_error("derive_root_key failed");
+    }
+    state_.root_key = mixed;
+    derive_header_key();
+}
+
+inline void DoubleRatchet::derive_header_key() {
+    state_.header_key = derive_chain_key(state_.root_key, "nocturne-dr-header");
+}
+
+inline void DoubleRatchet::derive_chain_keys() {
+    state_.send_chain_key = derive_chain_key(state_.root_key, "nocturne-dr-send");
+    state_.recv_chain_key = derive_chain_key(state_.root_key, "nocturne-dr-recv");
+}
+
+inline void DoubleRatchet::generate_new_dh_keypair() {
+    crypto_kx_keypair(state_.dh_public_key.data(), state_.dh_private_key.data());
+}
+
+inline DoubleRatchet::DoubleRatchet(const std::array<uint8_t, crypto_kx_SESSIONKEYBYTES>& shared_secret) {
+    if (crypto_generichash(state_.root_key.data(), state_.root_key.size(),
+            shared_secret.data(), shared_secret.size(),
+            reinterpret_cast<const unsigned char*>("nocturne-dr-init"), sizeof("nocturne-dr-init") - 1) != 0) {
+        throw std::runtime_error("DoubleRatchet init KDF failed");
+    }
+    generate_new_dh_keypair();
+    derive_header_key();
+    derive_chain_keys();
+    state_.is_initialized = true;
+}
+
+inline DoubleRatchet::DoubleRatchet(const RatchetState& state) {
+    state_ = state;
+}
+
+inline DoubleRatchet::~DoubleRatchet() {
+    zero_memory(state_.dh_private_key.data(), state_.dh_private_key.size());
+}
+
+inline void DoubleRatchet::set_remote_public_key(const std::array<uint8_t, crypto_kx_PUBLICKEYBYTES>& remote_pk) {
+    state_.dh_remote_public_key = remote_pk;
+}
+
+inline std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> DoubleRatchet::get_public_key() const {
+    return state_.dh_public_key;
+}
+
+inline bool DoubleRatchet::is_initialized() const {
+    return state_.is_initialized;
+}
+
+inline void DoubleRatchet::reset() {
+    RatchetState empty{};
+    state_ = empty;
+}
+
+inline RatchetState DoubleRatchet::get_state() const {
+    return state_;
+}
+
+inline void DoubleRatchet::set_state(const RatchetState& state) {
+    state_ = state;
+}
+
+inline void DoubleRatchet::perform_dh_ratchet() {
+    if (!state_.dh_remote_public_key.has_value()) {
+        throw std::runtime_error("DR: remote public key not set");
+    }
+    std::array<uint8_t, crypto_scalarmult_BYTES> dh1{};
+    if (crypto_scalarmult(dh1.data(), state_.dh_private_key.data(), state_.dh_remote_public_key->data()) != 0) {
+        throw std::runtime_error("DR: scalarmult failed (dh1)");
+    }
+    derive_root_key(dh1);
+    state_.recv_chain_count = 0;
+
+    generate_new_dh_keypair();
+    std::array<uint8_t, crypto_scalarmult_BYTES> dh2{};
+    if (crypto_scalarmult(dh2.data(), state_.dh_private_key.data(), state_.dh_remote_public_key->data()) != 0) {
+        throw std::runtime_error("DR: scalarmult failed (dh2)");
+    }
+    derive_root_key(dh2);
+    derive_chain_keys();
+    state_.send_chain_count = 0;
+}
+
+inline void DoubleRatchet::perform_symmetric_ratchet(bool is_sending) {
+    if (is_sending) {
+        state_.send_message_key = derive_message_key(state_.send_chain_key);
+        state_.send_chain_key = derive_chain_key(state_.send_chain_key, "nocturne-dr-send-next");
+        state_.send_message_count++;
+    } else {
+        state_.recv_message_key = derive_message_key(state_.recv_chain_key);
+        state_.recv_chain_key = derive_chain_key(state_.recv_chain_key, "nocturne-dr-recv-next");
+        state_.recv_message_count++;
+    }
+}
+
+inline void DoubleRatchet::store_skipped_message_key(
+    uint32_t message_number,
+    const std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>& key
+) {
+    constexpr size_t MAX_SKIPPED = 128;
+    if (state_.skipped_message_keys.size() >= MAX_SKIPPED) {
+        state_.skipped_message_keys.erase(state_.skipped_message_keys.begin());
+    }
+    state_.skipped_message_keys[message_number] = key;
+}
+
+inline std::optional<std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>>
+DoubleRatchet::get_message_key(uint32_t message_number) {
+    auto it = state_.skipped_message_keys.find(message_number);
+    if (it == state_.skipped_message_keys.end()) return std::nullopt;
+    auto key = it->second;
+    state_.skipped_message_keys.erase(it);
+    return key;
+}
+
+inline RatchetMessage DoubleRatchet::encrypt_message(const std::vector<uint8_t>& plaintext) {
+    if (!state_.is_initialized) throw std::runtime_error("DR: not initialized");
+    if (!state_.dh_remote_public_key.has_value()) throw std::runtime_error("DR: remote key not set");
+    perform_symmetric_ratchet(true);
+
+    RatchetMessage m{};
+    m.dh_public_key = state_.dh_public_key;
+    m.prev_chain_count = state_.recv_chain_count;
+    m.message_count = state_.send_message_count;
+    randombytes_buf(m.nonce.data(), m.nonce.size());
+
+    std::vector<uint8_t> aad;
+    aad.insert(aad.end(), m.dh_public_key.begin(), m.dh_public_key.end());
+    for (int i = 0; i < 4; ++i) aad.push_back(static_cast<uint8_t>((m.prev_chain_count >> (8 * i)) & 0xFF));
+    for (int i = 0; i < 4; ++i) aad.push_back(static_cast<uint8_t>((m.message_count >> (8 * i)) & 0xFF));
+
+    m.ciphertext.resize(plaintext.size() + crypto_aead_xchacha20poly1305_ietf_ABYTES);
+    unsigned long long ct_len = 0;
+    if (crypto_aead_xchacha20poly1305_ietf_encrypt(
+            m.ciphertext.data(), &ct_len,
+            plaintext.data(), plaintext.size(),
+            aad.data(), aad.size(),
+            nullptr,
+            m.nonce.data(), state_.send_message_key.data()) != 0) {
+        throw std::runtime_error("DR: aead encrypt failed");
+    }
+    m.ciphertext.resize(static_cast<size_t>(ct_len));
+    return m;
+}
+
+inline std::vector<uint8_t> DoubleRatchet::decrypt_message(const RatchetMessage& message) {
+    if (!state_.is_initialized) throw std::runtime_error("DR: not initialized");
+    if (!state_.dh_remote_public_key.has_value() || *state_.dh_remote_public_key != message.dh_public_key) {
+        set_remote_public_key(message.dh_public_key);
+        perform_dh_ratchet();
+    }
+
+    if (auto mk = get_message_key(message.message_count)) {
+        std::vector<uint8_t> aad;
+        aad.insert(aad.end(), message.dh_public_key.begin(), message.dh_public_key.end());
+        for (int i = 0; i < 4; ++i) aad.push_back(static_cast<uint8_t>((message.prev_chain_count >> (8 * i)) & 0xFF));
+        for (int i = 0; i < 4; ++i) aad.push_back(static_cast<uint8_t>((message.message_count >> (8 * i)) & 0xFF));
+
+        std::vector<uint8_t> pt(message.ciphertext.size() - crypto_aead_xchacha20poly1305_ietf_ABYTES);
+        unsigned long long pt_len = 0;
+        if (crypto_aead_xchacha20poly1305_ietf_decrypt(
+                pt.data(), &pt_len, nullptr,
+                message.ciphertext.data(), message.ciphertext.size(),
+                aad.data(), aad.size(),
+                message.nonce.data(), mk->data()) != 0) {
+            throw std::runtime_error("DR: aead decrypt failed (skipped)");
+        }
+        pt.resize(static_cast<size_t>(pt_len));
+        return pt;
+    }
+
+    while (state_.recv_message_count < message.message_count) {
+        auto mk = derive_message_key(state_.recv_chain_key);
+        store_skipped_message_key(state_.recv_message_count + 1, mk);
+        state_.recv_chain_key = derive_chain_key(state_.recv_chain_key, "nocturne-dr-recv-next");
+        state_.recv_message_count++;
+    }
+
+    perform_symmetric_ratchet(false);
+
+    std::vector<uint8_t> aad;
+    aad.insert(aad.end(), message.dh_public_key.begin(), message.dh_public_key.end());
+    for (int i = 0; i < 4; ++i) aad.push_back(static_cast<uint8_t>((message.prev_chain_count >> (8 * i)) & 0xFF));
+    for (int i = 0; i < 4; ++i) aad.push_back(static_cast<uint8_t>((message.message_count >> (8 * i)) & 0xFF));
+
+    std::vector<uint8_t> pt(message.ciphertext.size() - crypto_aead_xchacha20poly1305_ietf_ABYTES);
+    unsigned long long pt_len = 0;
+    if (crypto_aead_xchacha20poly1305_ietf_decrypt(
+            pt.data(), &pt_len, nullptr,
+            message.ciphertext.data(), message.ciphertext.size(),
+            aad.data(), aad.size(),
+            message.nonce.data(), state_.recv_message_key.data()) != 0) {
+        throw std::runtime_error("DR: aead decrypt failed");
+    }
+    pt.resize(static_cast<size_t>(pt_len));
+    return pt;
+}
+
+inline size_t DoubleRatchet::get_skipped_message_count() const {
+    return state_.skipped_message_keys.size();
+}
+
+inline void DoubleRatchet::clear_skipped_messages() {
+    state_.skipped_message_keys.clear();
+}
+
+inline std::vector<uint8_t> DoubleRatchet::serialize_state() const {
+    std::vector<uint8_t> out;
+    auto append = [&](const uint8_t* p, size_t n){ out.insert(out.end(), p, p + n); };
+    append(state_.root_key.data(), state_.root_key.size());
+    append(state_.header_key.data(), state_.header_key.size());
+    append(state_.send_chain_key.data(), state_.send_chain_key.size());
+    append(state_.recv_chain_key.data(), state_.recv_chain_key.size());
+    append(state_.send_message_key.data(), state_.send_message_key.size());
+    append(state_.recv_message_key.data(), state_.recv_message_key.size());
+    append(reinterpret_cast<const uint8_t*>(&state_.send_chain_count), sizeof(state_.send_chain_count));
+    append(reinterpret_cast<const uint8_t*>(&state_.recv_chain_count), sizeof(state_.recv_chain_count));
+    append(reinterpret_cast<const uint8_t*>(&state_.send_message_count), sizeof(state_.send_message_count));
+    append(reinterpret_cast<const uint8_t*>(&state_.recv_message_count), sizeof(state_.recv_message_count));
+    append(state_.dh_public_key.data(), state_.dh_public_key.size());
+    append(state_.dh_private_key.data(), state_.dh_private_key.size());
+    uint8_t has_remote = state_.dh_remote_public_key.has_value() ? 1 : 0;
+    append(&has_remote, 1);
+    if (has_remote) append(state_.dh_remote_public_key->data(), state_.dh_remote_public_key->size());
+    return out;
+}
+
+inline std::optional<DoubleRatchet> DoubleRatchet::deserialize_state(const std::vector<uint8_t>& data) {
+    DoubleRatchet::RatchetState st{};
+    size_t off = 0;
+    auto need = [&](size_t n){ if (off + n > data.size()) throw std::runtime_error("DR: state truncated"); };
+    auto get = [&](void* dst, size_t n){ need(n); std::memcpy(dst, data.data() + off, n); off += n; };
+    try {
+        get(st.root_key.data(), st.root_key.size());
+        get(st.header_key.data(), st.header_key.size());
+        get(st.send_chain_key.data(), st.send_chain_key.size());
+        get(st.recv_chain_key.data(), st.recv_chain_key.size());
+        get(st.send_message_key.data(), st.send_message_key.size());
+        get(st.recv_message_key.data(), st.recv_message_key.size());
+        get(&st.send_chain_count, sizeof(st.send_chain_count));
+        get(&st.recv_chain_count, sizeof(st.recv_chain_count));
+        get(&st.send_message_count, sizeof(st.send_message_count));
+        get(&st.recv_message_count, sizeof(st.recv_message_count));
+        get(st.dh_public_key.data(), st.dh_public_key.size());
+        get(st.dh_private_key.data(), st.dh_private_key.size());
+        uint8_t has_remote = 0; get(&has_remote, 1);
+        if (has_remote) {
+            std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> r{};
+            get(r.data(), r.size());
+            st.dh_remote_public_key = r;
+        }
+        st.is_initialized = true;
+        DoubleRatchet dr(st);
+        return dr;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
 
 /**
  * Ratchet Session Manager
