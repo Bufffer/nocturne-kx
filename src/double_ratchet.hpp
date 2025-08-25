@@ -406,7 +406,7 @@ inline std::vector<uint8_t> DoubleRatchet::serialize_state() const {
 }
 
 inline std::optional<DoubleRatchet> DoubleRatchet::deserialize_state(const std::vector<uint8_t>& data) {
-    DoubleRatchet::RatchetState st{};
+    RatchetState st{};
     size_t off = 0;
     auto need = [&](size_t n){ if (off + n > data.size()) throw std::runtime_error("DR: state truncated"); };
     auto get = [&](void* dst, size_t n){ need(n); std::memcpy(dst, data.data() + off, n); off += n; };
@@ -518,7 +518,7 @@ public:
                                    const std::array<uint8_t, crypto_kx_PUBLICKEYBYTES>& receiver_pk,
                                    uint32_t rotation_id = 0,
                                    const std::vector<uint8_t>& aad = {},
-                                   HSMInterface* signer = nullptr);
+                                   void* signer_unused = nullptr);
     
     std::vector<uint8_t> decrypt_message(const ProtocolMessage& message,
                                         const std::array<uint8_t, crypto_kx_PUBLICKEYBYTES>& receiver_pk,

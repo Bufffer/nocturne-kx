@@ -1321,7 +1321,7 @@ public:
             const uint8_t* ct_ptr = p;
             // AAD: literal context + plaintext version without MSB
             uint64_t ver_plain = (file_version & ~(1ULL<<63));
-            const char* ctx = "NOCTURNE-RDB-V2";
+            // context kept only for documentation of AAD structure
             // Decrypt
             std::vector<uint8_t> pt(ct_len - crypto_aead_xchacha20poly1305_ietf_ABYTES);
             unsigned long long pt_len = 0;
@@ -1934,8 +1934,9 @@ int main(int argc, char** argv) {
         if (opt_audit_log) audit_log::initialize(opt_audit_log);
         rate_limiting::initialize(rate_limiting::RateLimitConfig{}, opt_rate_store);
         if (!opt_hsm_pass.empty()) {
-            // set env for current process (Windows-specific _putenv_s works via putenv on POSIX)
-            _putenv_s("NOCTURNE_HSM_PASSPHRASE", opt_hsm_pass.c_str());
+            // Set env for current process (portable)
+            std::string kv = std::string("NOCTURNE_HSM_PASSPHRASE=") + opt_hsm_pass;
+            ::putenv(strdup(kv.c_str()));
         }
 
         if (args.empty()) { usage(); return 1; }

@@ -72,8 +72,10 @@ private:
             return -1;
         };
         for (size_t i=0;i<n;i++){
-            int hi = val(s[2*i]); int lo = val(s[2*i+1]);
-            if (hi<0||lo<0) return false; out[i] = static_cast<uint8_t>((hi<<4)|lo);
+            int hi = val(s[2*i]);
+            int lo = val(s[2*i+1]);
+            if (hi<0||lo<0) return false;
+            out[i] = static_cast<uint8_t>((hi<<4)|lo);
         }
         return true;
     }
