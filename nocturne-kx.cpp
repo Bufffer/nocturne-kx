@@ -31,6 +31,49 @@
 #endif
 
 #include <sodium.h>
+// ----- FileHSM secure storage helpers (passphrase-based at-rest encryption) -----
+namespace filehsm_secure_storage {
+    static constexpr const char* MAGIC = "NCHSM2"; // simple magic header
+    static constexpr size_t MAGIC_LEN = 6;
+    static constexpr size_t SALT_LEN = 16;
+
+    inline bool looks_encrypted(const std::vector<uint8_t>& blob) {
+        return blob.size() > MAGIC_LEN && std::memcmp(blob.data(), MAGIC, MAGIC_LEN) == 0;
+    }
+
+    inline std::optional<std::array<uint8_t, crypto_sign_SECRETKEYBYTES>>
+    decrypt_sk_with_passphrase(const std::vector<uint8_t>& blob) {
+        if (!looks_encrypted(blob)) return std::nullopt;
+        const uint8_t* p = blob.data() + MAGIC_LEN;
+        size_t rem = blob.size() - MAGIC_LEN;
+        if (rem < SALT_LEN + crypto_aead_xchacha20poly1305_ietf_NPUBBYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES)
+            throw std::runtime_error("FileHSM: encrypted blob truncated");
+        std::array<uint8_t, SALT_LEN> salt{}; std::memcpy(salt.data(), p, SALT_LEN); p += SALT_LEN; rem -= SALT_LEN;
+        std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES> npub{}; std::memcpy(npub.data(), p, npub.size()); p += npub.size(); rem -= npub.size();
+        std::vector<uint8_t> ct(p, p + rem);
+
+        const char* pass = std::getenv("NOCTURNE_HSM_PASSPHRASE");
+        if (!pass || std::strlen(pass) == 0) throw std::runtime_error("FileHSM: NOCTURNE_HSM_PASSPHRASE not set for encrypted key");
+
+        std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> k{};
+        if (crypto_pwhash(k.data(), k.size(), pass, std::strlen(pass), salt.data(),
+                          crypto_pwhash_OPSLIMIT_INTERACTIVE, crypto_pwhash_MEMLIMIT_INTERACTIVE, crypto_pwhash_ALG_DEFAULT) != 0) {
+            throw std::runtime_error("FileHSM: key derivation failed");
+        }
+
+        if (ct.size() != crypto_sign_SECRETKEYBYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES)
+            throw std::runtime_error("FileHSM: encrypted payload size invalid");
+
+        std::array<uint8_t, crypto_sign_SECRETKEYBYTES> sk{};
+        unsigned long long pt_len = 0;
+        if (crypto_aead_xchacha20poly1305_ietf_decrypt(sk.data(), &pt_len, nullptr,
+                ct.data(), ct.size(), nullptr, 0, npub.data(), k.data()) != 0) {
+            throw std::runtime_error("FileHSM: decryption failed");
+        }
+        if (pt_len != crypto_sign_SECRETKEYBYTES) throw std::runtime_error("FileHSM: decrypted length mismatch");
+        return sk;
+    }
+}
 
 // Platform-specific headers for side-channel protection
 #if defined(__x86_64__) || defined(__i386__)
@@ -1312,11 +1355,14 @@ public:
           secure_pk_(crypto_sign_PUBLICKEYBYTES) {
         
         auto b = read_all(path);
-        if (b.size() != crypto_sign_SECRETKEYBYTES) 
-            throw std::runtime_error("filehsm sk size mismatch");
-        
-        // Copy secret key to secure memory
-        std::memcpy(secure_sk_.get(), b.data(), crypto_sign_SECRETKEYBYTES);
+        // Support encrypted at-rest secret keys if header present
+        if (auto dec = filehsm_secure_storage::decrypt_sk_with_passphrase(b)) {
+            std::memcpy(secure_sk_.get(), dec->data(), crypto_sign_SECRETKEYBYTES);
+        } else {
+            if (b.size() != crypto_sign_SECRETKEYBYTES)
+                throw std::runtime_error("filehsm sk size mismatch");
+            std::memcpy(secure_sk_.get(), b.data(), crypto_sign_SECRETKEYBYTES);
+        }
         
         // Derive public key from secret key in secure memory
         if (crypto_sign_ed25519_sk_to_pk(secure_pk_.get(), secure_sk_.get()) != 0)
