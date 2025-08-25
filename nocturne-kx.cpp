@@ -19,6 +19,7 @@
 #include <map>
 #include <algorithm>
 #include <functional>
+#include <iomanip>
 
 // Platform-specific headers for memory protection
 #ifdef _WIN32
@@ -250,6 +251,10 @@ namespace rate_limiting {
         std::unordered_map<std::string, RequestEntry> request_history_;
         std::mutex mutex_;
         RateLimitConfig config_;
+        // Optional persistence
+        std::optional<std::filesystem::path> storage_path_;
+        std::chrono::steady_clock::time_point last_persist_{std::chrono::steady_clock::now()};
+        uint32_t persist_interval_ms_{60000}; // 60s
         
         // Clean up old entries to prevent memory leaks
         void cleanup_old_entries() {
@@ -263,6 +268,53 @@ namespace rate_limiting {
                     ++it;
                 }
             }
+        }
+
+        // Persistence: very simple JSONL (identifier, count, penalty, last_penalty, backoff)
+        void persist_locked() {
+            if (!storage_path_) return;
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_persist_).count() < persist_interval_ms_) return;
+            last_persist_ = now;
+            try {
+                std::filesystem::create_directories(storage_path_->parent_path());
+                std::string tmp = storage_path_->string() + ".tmp";
+                std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+                if (!f) return;
+                for (const auto& kv : request_history_) {
+                    const auto& id = kv.first; const auto& e = kv.second;
+                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(e.last_penalty.time_since_epoch()).count();
+                    f << id << ',' << e.request_count << ',' << e.penalty_count << ',' << ms << ',' << e.current_backoff_ms << '\n';
+                }
+                f.close();
+                std::error_code ec;
+                std::filesystem::rename(tmp, *storage_path_, ec);
+                if (ec) { std::filesystem::remove(*storage_path_, ec); std::filesystem::rename(tmp, *storage_path_, ec); }
+            } catch (...) { /* best-effort */ }
+        }
+
+        void load_from_disk() {
+            if (!storage_path_ || !std::filesystem::exists(*storage_path_)) return;
+            try {
+                std::ifstream f(*storage_path_);
+                if (!f) return;
+                request_history_.clear();
+                std::string line;
+                while (std::getline(f, line)) {
+                    // id,req,pen,last_ms,backoff
+                    std::istringstream iss(line);
+                    std::string id; std::getline(iss, id, ',');
+                    std::string s_req, s_pen, s_last, s_back;
+                    std::getline(iss, s_req, ','); std::getline(iss, s_pen, ','); std::getline(iss, s_last, ','); std::getline(iss, s_back, ',');
+                    RequestEntry e;
+                    e.request_count = s_req.empty()?0:static_cast<uint32_t>(std::stoul(s_req));
+                    e.penalty_count = s_pen.empty()?0:static_cast<uint32_t>(std::stoul(s_pen));
+                    long long last_ms = s_last.empty()?0:std::stoll(s_last);
+                    e.last_penalty = std::chrono::steady_clock::time_point(std::chrono::milliseconds(last_ms));
+                    e.current_backoff_ms = s_back.empty()?0:static_cast<uint32_t>(std::stoul(s_back));
+                    request_history_[id] = e;
+                }
+            } catch (...) { /* ignore */ }
         }
         
         // Calculate exponential backoff
@@ -279,8 +331,11 @@ namespace rate_limiting {
         }
         
     public:
-        explicit RateLimiter(const RateLimitConfig& config = RateLimitConfig{}) 
-            : config_(config) {}
+        explicit RateLimiter(const RateLimitConfig& config = RateLimitConfig{},
+                             const std::optional<std::filesystem::path>& storage_path = std::nullopt) 
+            : config_(config), storage_path_(storage_path) {
+            if (storage_path_) load_from_disk();
+        }
         
         // Check if request is allowed
         bool allow_request(const std::string& identifier) {
@@ -353,6 +408,8 @@ namespace rate_limiting {
                 return false;
             }
             
+            // Periodically persist to disk
+            persist_locked();
             return true; // Request allowed
         }
         
@@ -392,9 +449,9 @@ namespace rate_limiting {
     static std::unique_ptr<RateLimiter> global_limiter = nullptr;
     
     // Initialize global rate limiter
-    inline void initialize(const RateLimitConfig& config = RateLimitConfig{}) {
+    inline void initialize(const RateLimitConfig& config = RateLimitConfig{}, const std::optional<std::filesystem::path>& storage_path = std::nullopt) {
         if (!global_limiter) {
-            global_limiter = std::make_unique<RateLimiter>(config);
+            global_limiter = std::make_unique<RateLimiter>(config, storage_path);
         }
     }
     
@@ -419,6 +476,59 @@ namespace rate_limiting {
         if (global_limiter) {
             global_limiter->reset(identifier);
         }
+    }
+}
+
+// Structured audit logging (JSON Lines)
+namespace audit_log {
+    enum class Severity { INFO, WARN, ERROR, SECURITY };
+
+    class AuditLogger {
+    private:
+        std::mutex mu_;
+        std::optional<std::filesystem::path> path_;
+    public:
+        explicit AuditLogger(const std::optional<std::filesystem::path>& path): path_(path) {}
+
+        void log(Severity sev, const std::string& category, const std::string& subject, const std::string& message) {
+            if (!path_) return;
+            std::lock_guard<std::mutex> lk(mu_);
+            try {
+                std::filesystem::create_directories(path_->parent_path());
+                std::ofstream f(*path_, std::ios::app);
+                if (!f) return;
+                auto now = std::chrono::system_clock::now();
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+                const char* sev_s = (sev==Severity::INFO?"INFO":sev==Severity::WARN?"WARN":sev==Severity::ERROR?"ERROR":"SECURITY");
+                // Very small JSON object per line
+                f << "{\"ts\":" << ms
+                  << ",\"sev\":\"" << sev_s << "\""
+                  << ",\"cat\":\"" << category << "\""
+                  << ",\"sub\":\"" << subject << "\""
+                  << ",\"msg\":\"";
+                // Escape quotes in message
+                for (char c : message) { if (c=='"') f << '\\'; f << c; }
+                f << "\"}" << '\n';
+            } catch (...) { /* ignore */ }
+        }
+    };
+
+    static std::unique_ptr<AuditLogger> global_logger = nullptr;
+
+    inline void initialize(const std::optional<std::filesystem::path>& path = std::nullopt) {
+        if (!global_logger) global_logger = std::make_unique<AuditLogger>(path);
+    }
+    inline void info(const std::string& cat, const std::string& sub, const std::string& msg) {
+        if (!global_logger) return; global_logger->log(Severity::INFO, cat, sub, msg);
+    }
+    inline void warn(const std::string& cat, const std::string& sub, const std::string& msg) {
+        if (!global_logger) return; global_logger->log(Severity::WARN, cat, sub, msg);
+    }
+    inline void error(const std::string& cat, const std::string& sub, const std::string& msg) {
+        if (!global_logger) return; global_logger->log(Severity::ERROR, cat, sub, msg);
+    }
+    inline void security(const std::string& cat, const std::string& sub, const std::string& msg) {
+        if (!global_logger) return; global_logger->log(Severity::SECURITY, cat, sub, msg);
     }
 }
 
