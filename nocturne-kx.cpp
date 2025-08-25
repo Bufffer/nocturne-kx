@@ -1088,11 +1088,24 @@ class ReplayDB {
     std::unordered_map<std::string, uint64_t> m;
     std::mutex mu;
     std::array<uint8_t, crypto_generichash_KEYBYTES> mac_key{}; // key to MAC DB (should be stored in HSM in real deployments)
+    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> enc_key{}; // key to encrypt DB metadata
     uint64_t version{1};
 
     static std::string db_temp_path(const std::filesystem::path &p) { return p.string() + ".tmp"; }
     // Persist to disk without re-entrantly taking the mutex (caller must hold mu)
     void persist_unlocked();
+
+    static std::string make_scope_key(const std::string& rx_hex,
+                                      const std::optional<std::string>& sender_pk_hex,
+                                      const std::optional<std::string>& session_id) {
+        // Canonical composite key
+        std::string key;
+        key.reserve(rx_hex.size() + (sender_pk_hex?sender_pk_hex->size():1) + (session_id?session_id->size():1) + 16);
+        key += "rx="; key += rx_hex;
+        key += "&snd="; key += (sender_pk_hex ? *sender_pk_hex : std::string("-"));
+        key += "&sid="; key += (session_id ? *session_id : std::string("-"));
+        return key;
+    }
 
 public:
     // mac_key can be loaded from HSM; here we allow a file-based key for demo purposes
@@ -1106,6 +1119,9 @@ public:
             // generate a transient key (NOT SECURE FOR REAL DEPLOYMENT)
             crypto_generichash_keygen(mac_key.data());
         }
+        // Derive an encryption key from mac_key for metadata confidentiality
+        if (crypto_generichash(enc_key.data(), enc_key.size(), mac_key.data(), mac_key.size(), reinterpret_cast<const uint8_t*>("replaydb-enc"), sizeof("replaydb-enc")-1) != 0)
+            throw std::runtime_error("enc key derivation failed");
         load();
     }
 
@@ -1115,26 +1131,48 @@ public:
         if (!std::filesystem::exists(path)) return;
         auto raw = read_all(path);
         if (raw.size() < 16) throw std::runtime_error("db too small or corrupted");
-        // very simple container: [8B version LE][4B json_len LE][json bytes][mac (crypto_generichash_BYTES)]
         const uint8_t* p = raw.data();
-        uint64_t file_version = read_u64_le(p);
-        p += 8;
-        uint32_t json_len = nocturne::read_u32_le(p);
-        p += 4;
-        if (raw.size() < 8 + 4 + json_len + crypto_generichash_BYTES) throw std::runtime_error("db truncated");
-        const uint8_t* json_ptr = p; p += json_len;
-        const uint8_t* mac_ptr = p;
-        // verify mac
-        std::array<uint8_t, crypto_generichash_BYTES> mac{};
-        if (crypto_generichash(mac.data(), mac.size(), raw.data(), 8 + 4 + json_len, mac_key.data(), mac_key.size()) != 0) throw std::runtime_error("mac calc failed");
-        // Side-channel protection: constant-time MAC comparison
-        if (!side_channel_protection::constant_time_compare(mac.data(), mac_ptr, mac.size())) {
-            // Add random delay to prevent timing attacks
-            side_channel_protection::random_delay();
-            throw std::runtime_error("replaydb MAC mismatch");
+        uint64_t file_version = read_u64_le(p); p += 8;
+        bool is_encrypted = (file_version & (1ULL<<63)) != 0;
+        std::string json_s;
+        if (!is_encrypted) {
+            // Legacy format: [8B version][4B json_len][json][mac]
+            if (raw.size() < 8 + 4) throw std::runtime_error("db truncated");
+            uint32_t json_len = nocturne::read_u32_le(p); p += 4;
+            if (raw.size() < 8 + 4 + json_len + crypto_generichash_BYTES) throw std::runtime_error("db truncated");
+            const uint8_t* json_ptr = p; p += json_len;
+            const uint8_t* mac_ptr = p;
+            std::array<uint8_t, crypto_generichash_BYTES> mac{};
+            if (crypto_generichash(mac.data(), mac.size(), raw.data(), 8 + 4 + json_len, mac_key.data(), mac_key.size()) != 0) throw std::runtime_error("mac calc failed");
+            if (!side_channel_protection::constant_time_compare(mac.data(), mac_ptr, mac.size())) {
+                side_channel_protection::random_delay();
+                throw std::runtime_error("replaydb MAC mismatch");
+            }
+            json_s.assign(reinterpret_cast<const char*>(json_ptr), json_len);
+        } else {
+            // Encrypted format: [8B version (MSB=1)][24B nonce][4B ct_len][ct]
+            std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES> npub{};
+            if (raw.size() < 8 + npub.size() + 4) throw std::runtime_error("db truncated");
+            std::memcpy(npub.data(), p, npub.size()); p += npub.size();
+            uint32_t ct_len = nocturne::read_u32_le(p); p += 4;
+            if (raw.size() < 8 + npub.size() + 4 + ct_len) throw std::runtime_error("db truncated");
+            const uint8_t* ct_ptr = p;
+            // AAD: literal context + plaintext version without MSB
+            uint64_t ver_plain = (file_version & ~(1ULL<<63));
+            const char* ctx = "NOCTURNE-RDB-V2";
+            // Decrypt
+            std::vector<uint8_t> pt(ct_len - crypto_aead_xchacha20poly1305_ietf_ABYTES);
+            unsigned long long pt_len = 0;
+            if (crypto_aead_xchacha20poly1305_ietf_decrypt(pt.data(), &pt_len, nullptr,
+                    ct_ptr, ct_len,
+                    reinterpret_cast<const unsigned char*>(&ver_plain), sizeof(ver_plain),
+                    npub.data(), enc_key.data()) != 0) {
+                throw std::runtime_error("db decrypt failed");
+            }
+            pt.resize(static_cast<size_t>(pt_len));
+            json_s.assign(reinterpret_cast<const char*>(pt.data()), pt.size());
         }
-        // parse json-ish (simple lines: hexpk:counter)
-        std::string json_s(reinterpret_cast<const char*>(json_ptr), json_len);
+        // parse json-ish (simple lines: key:counter), where key is composite (rx&snd&sid)
         std::istringstream iss(json_s);
         std::string line;
         while (std::getline(iss,line)) {
@@ -1153,14 +1191,35 @@ public:
 
     uint64_t get(const std::string &hexpk) {
         std::lock_guard<std::mutex> lk(mu);
-        auto it = m.find(hexpk);
+        auto composite = make_scope_key(hexpk, std::nullopt, std::nullopt);
+        auto it = m.find(composite);
         if (it==m.end()) return 0;
         return it->second;
     }
     void set(const std::string &hexpk, uint64_t v) {
         std::lock_guard<std::mutex> lk(mu);
-        m[hexpk]=v;
-        // Persist while holding the lock to keep DB state consistent, but avoid re-locking
+        auto composite = make_scope_key(hexpk, std::nullopt, std::nullopt);
+        m[composite]=v;
+        persist_unlocked();
+    }
+
+    uint64_t get_scoped(const std::string& rx_hex,
+                        const std::optional<std::string>& sender_pk_hex,
+                        const std::optional<std::string>& session_id) {
+        std::lock_guard<std::mutex> lk(mu);
+        auto key = make_scope_key(rx_hex, sender_pk_hex, session_id);
+        auto it = m.find(key);
+        if (it==m.end()) return 0;
+        return it->second;
+    }
+
+    void set_scoped(const std::string& rx_hex,
+                    const std::optional<std::string>& sender_pk_hex,
+                    const std::optional<std::string>& session_id,
+                    uint64_t v) {
+        std::lock_guard<std::mutex> lk(mu);
+        auto key = make_scope_key(rx_hex, sender_pk_hex, session_id);
+        m[key]=v;
         persist_unlocked();
     }
 
@@ -1171,19 +1230,33 @@ public:
 
 // Internal helper for ReplayDB: write DB to disk without taking the mutex (caller holds lock)
 void ReplayDB::persist_unlocked() {
-    // build json text
+    // build json text from composite keys
     std::ostringstream oss;
     for (auto &kv : m) oss << kv.first << ':' << kv.second << '\n';
     std::string js = oss.str();
-    uint32_t json_len = static_cast<uint32_t>(js.size());
 
-    std::vector<uint8_t> buf; buf.reserve(8+4+json_len+crypto_generichash_BYTES);
-    nocturne::write_u64_le(buf, ++version);
-    nocturne::write_u32_le(buf, json_len);
-    buf.insert(buf.end(), js.begin(), js.end());
-    std::array<uint8_t, crypto_generichash_BYTES> mac{};
-    if (crypto_generichash(mac.data(), mac.size(), buf.data(), 8 + 4 + json_len, mac_key.data(), mac_key.size()) != 0) throw std::runtime_error("mac calc failed");
-    buf.insert(buf.end(), mac.begin(), mac.end());
+    // Encrypt JSON
+    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES> npub{};
+    randombytes_buf(npub.data(), npub.size());
+    std::vector<uint8_t> ct(js.size() + crypto_aead_xchacha20poly1305_ietf_ABYTES);
+    unsigned long long ct_len = 0;
+    uint64_t v = ++version; // increment version
+    uint64_t v_enc = v | (1ULL<<63); // mark encrypted format
+    if (crypto_aead_xchacha20poly1305_ietf_encrypt(ct.data(), &ct_len,
+            reinterpret_cast<const unsigned char*>(js.data()), js.size(),
+            reinterpret_cast<const unsigned char*>(&v), sizeof(v),
+            nullptr,
+            npub.data(), enc_key.data()) != 0) {
+        throw std::runtime_error("db encrypt failed");
+    }
+    ct.resize(static_cast<size_t>(ct_len));
+
+    // Compose file: [8B version (MSB=1)][24B nonce][4B ct_len][ct]
+    std::vector<uint8_t> buf; buf.reserve(8 + npub.size() + 4 + ct.size());
+    nocturne::write_u64_le(buf, v_enc);
+    buf.insert(buf.end(), npub.begin(), npub.end());
+    nocturne::write_u32_le(buf, static_cast<uint32_t>(ct.size()));
+    buf.insert(buf.end(), ct.begin(), ct.end());
 
     std::string tmp = db_temp_path(path);
     {
@@ -1193,11 +1266,9 @@ void ReplayDB::persist_unlocked() {
         f.flush();
         if (!f) throw std::runtime_error("write tmp db failed");
     }
-    // On Windows, std::filesystem::rename throws if destination exists. Try overwrite semantics.
     std::error_code ec;
     std::filesystem::rename(tmp, path, ec);
     if (ec) {
-        // Fallback: remove destination then rename
         std::filesystem::remove(path, ec);
         std::filesystem::rename(tmp, path, ec);
         if (ec) throw std::runtime_error("atomic rename failed: " + ec.message());
