@@ -907,26 +907,28 @@ namespace memory_protection {
                 return;
             }
             
-            auto& info = it->second;
-            
+            // Make a copy of allocation info before mutating the map so we don't
+            // access freed map node memory (use-after-free).
+            AllocationInfo info_copy = it->second;
+
             // Scrub memory before deallocation
-            scrub_memory(ptr, info.size);
-            
+            scrub_memory(ptr, info_copy.size);
+
             // Unlock memory if it was locked
-            if (info.is_locked) {
-                unlock_memory(ptr, info.size);
+            if (info_copy.is_locked) {
+                unlock_memory(ptr, info_copy.size);
             }
-            
+
             // Update statistics
-            total_allocated_ -= info.size;
+            total_allocated_ -= info_copy.size;
             allocation_count_--;
-            
+
             // Remove from tracking
             allocations_.erase(it);
-            
-            // Free memory
+
+            // Free memory (use copied size)
             if (config_.enable_guard_pages) {
-                free_with_guards(ptr, info.size);
+                free_with_guards(ptr, info_copy.size);
             } else {
                 std::free(ptr);
             }
