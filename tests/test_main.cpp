@@ -1,7 +1,7 @@
-#define CATCH_CONFIG_MAIN
 #define NOCTURNE_UNIT_TEST
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/catch_session.hpp>
 #include <array>
 #include <vector>
 #include <string>
@@ -15,6 +15,12 @@
 #include "../nocturne-kx.cpp"
 
 using namespace nocturne;
+
+int main(int argc, char* argv[]) {
+    // Initialize and run Catch2 test session
+    Catch::Session session;
+    return session.run(argc, argv);
+}
 
 TEST_CASE("Basic key generation", "[crypto]") {
     check_sodium();
