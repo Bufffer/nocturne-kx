@@ -1,5 +1,5 @@
 // Minimal LibPKCS11Wrapper implementation that works with SoftHSM2
-#include "src/pkcs11_wrapper.hpp"
+#include "pkcs11_wrapper.hpp"
 #include <dlfcn.h>
 #include <iostream>
 
