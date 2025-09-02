@@ -1674,7 +1674,7 @@ public:
         try {
             b = read_all(path);
         } catch (const std::exception& e) {
-            throw IOError(std::string("FileHSM: failed to read key file: ") + e.what());
+            throw nocturne::IOError(std::string("FileHSM: failed to read key file: ") + e.what());
         }
 
         // Support encrypted at-rest secret keys if header present
@@ -1683,22 +1683,22 @@ public:
                 std::memcpy(secure_sk_.get(), dec->data(), crypto_sign_SECRETKEYBYTES);
             } else {
                 if (b.size() != crypto_sign_SECRETKEYBYTES)
-                    throw HSMError("filehsm sk size mismatch");
+                    throw nocturne::HSMError("filehsm sk size mismatch");
                 std::memcpy(secure_sk_.get(), b.data(), crypto_sign_SECRETKEYBYTES);
             }
         } catch (const std::exception& e) {
-            throw HSMError(std::string("FileHSM: failed to load/decrypt key: ") + e.what());
+            throw nocturne::HSMError(std::string("FileHSM: failed to load/decrypt key: ") + e.what());
         }
 
         // Derive public key from secret key in secure memory
         if (crypto_sign_ed25519_sk_to_pk(secure_pk_.get(), secure_sk_.get()) != 0)
-            throw CryptoError("failed to derive public key from secret key");
+            throw nocturne::CryptoError("failed to derive public key from secret key");
 
         initialized_ = true;
     }
     
     std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
-        if (!initialized_) throw HSMError("FileHSM not initialized");
+        if (!initialized_) throw nocturne::HSMError("FileHSM not initialized");
         nocturne::Bytes msg(data, data+len);
 
         // Create temporary array for signing (will be zeroed automatically)
@@ -1771,11 +1771,12 @@ public:
     
     std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
         if (!initialized_) {
-            throw HSMError("PKCS#11 HSM not initialized");
+            throw nocturne::HSMError("PKCS#11 HSM not initialized");
         }
 
         // MILITARY-GRADE: If PKCS#11 not implemented, fail fast to avoid returning bogus signatures
-        throw HSMError("PKCS#11 signing not implemented in this build");
+        throw nocturne::HSMError("PKCS#11 signing not implemented in this build");
+        return std::array<uint8_t, crypto_sign_BYTES>{};
     }
     
     std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() override {
