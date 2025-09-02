@@ -1054,6 +1054,17 @@ constexpr uint8_t FLAG_HAS_RATCHET = 0x02;
 
 using Bytes = std::vector<uint8_t>;
 
+// Custom exception hierarchy for clearer error classification
+class NocturneError : public std::runtime_error {
+public:
+    explicit NocturneError(const std::string& msg) : std::runtime_error(msg) {}
+};
+
+class HSMError : public NocturneError { public: explicit HSMError(const std::string& m) : NocturneError(m) {} };
+class CryptoError : public NocturneError { public: explicit CryptoError(const std::string& m) : NocturneError(m) {} };
+class IOError : public NocturneError { public: explicit IOError(const std::string& m) : NocturneError(m) {} };
+
+
 struct X25519KeyPair {
     std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> pk{};
     std::array<uint8_t, crypto_kx_SECRETKEYBYTES> sk{};
@@ -1090,22 +1101,24 @@ inline X25519KeyPair gen_x25519() {
 }
 
 inline Ed25519KeyPair gen_ed25519() {
-    // TEMPORARY FIX: Use simple key generation to debug the hanging issue
+    // Use secure memory for Ed25519 key generation to avoid secret leakage
+    memory_protection::SecureMemory<uint8_t> secure_sk(crypto_sign_SECRETKEYBYTES);
+    memory_protection::SecureMemory<uint8_t> secure_pk(crypto_sign_PUBLICKEYBYTES);
+
+    if (crypto_sign_keypair(secure_pk.get(), secure_sk.get()) != 0) {
+        throw CryptoError("ed25519 keypair generation failed");
+    }
+
+    // Side-channel protection
+    side_channel_protection::flush_cache_line(secure_sk.get());
+    side_channel_protection::random_delay();
+    side_channel_protection::memory_barrier();
+
     Ed25519KeyPair kp;
-    
-    // Generate key pair directly
-    crypto_sign_keypair(kp.pk.data(), kp.sk.data());
-    
-    // TODO: Re-enable secure memory and side-channel protection after fixing the issue
-    // memory_protection::SecureMemory<uint8_t> secure_sk(crypto_sign_SECRETKEYBYTES);
-    // memory_protection::SecureMemory<uint8_t> secure_pk(crypto_sign_PUBLICKEYBYTES);
-    // crypto_sign_keypair(secure_pk.get(), secure_sk.get());
-    // side_channel_protection::flush_cache_line(secure_sk.get());
-    // side_channel_protection::random_delay();
-    // side_channel_protection::memory_barrier();
-    // std::memcpy(kp.pk.data(), secure_pk.get(), crypto_sign_PUBLICKEYBYTES);
-    // std::memcpy(kp.sk.data(), secure_sk.get(), crypto_sign_SECRETKEYBYTES);
-    
+    std::memcpy(kp.pk.data(), secure_pk.get(), crypto_sign_PUBLICKEYBYTES);
+    std::memcpy(kp.sk.data(), secure_sk.get(), crypto_sign_SECRETKEYBYTES);
+
+    // secure memory will be zeroed on destructor of SecureMemory
     return kp;
 }
 
@@ -1656,38 +1669,49 @@ public:
     FileHSM(const std::filesystem::path &path) 
         : secure_sk_(crypto_sign_SECRETKEYBYTES),
           secure_pk_(crypto_sign_PUBLICKEYBYTES) {
-        
-        auto b = read_all(path);
-        // Support encrypted at-rest secret keys if header present
-        if (auto dec = filehsm_secure_storage::decrypt_sk_with_passphrase(b)) {
-            std::memcpy(secure_sk_.get(), dec->data(), crypto_sign_SECRETKEYBYTES);
-        } else {
-            if (b.size() != crypto_sign_SECRETKEYBYTES)
-                throw std::runtime_error("filehsm sk size mismatch");
-            std::memcpy(secure_sk_.get(), b.data(), crypto_sign_SECRETKEYBYTES);
+
+        std::vector<uint8_t> b;
+        try {
+            b = read_all(path);
+        } catch (const std::exception& e) {
+            throw IOError(std::string("FileHSM: failed to read key file: ") + e.what());
         }
-        
+
+        // Support encrypted at-rest secret keys if header present
+        try {
+            if (auto dec = filehsm_secure_storage::decrypt_sk_with_passphrase(b)) {
+                std::memcpy(secure_sk_.get(), dec->data(), crypto_sign_SECRETKEYBYTES);
+            } else {
+                if (b.size() != crypto_sign_SECRETKEYBYTES)
+                    throw HSMError("filehsm sk size mismatch");
+                std::memcpy(secure_sk_.get(), b.data(), crypto_sign_SECRETKEYBYTES);
+            }
+        } catch (const std::exception& e) {
+            throw HSMError(std::string("FileHSM: failed to load/decrypt key: ") + e.what());
+        }
+
         // Derive public key from secret key in secure memory
         if (crypto_sign_ed25519_sk_to_pk(secure_pk_.get(), secure_sk_.get()) != 0)
-            throw std::runtime_error("failed to derive public key");
-        
+            throw CryptoError("failed to derive public key from secret key");
+
         initialized_ = true;
     }
     
     std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
-        if (!initialized_) throw std::runtime_error("FileHSM not initialized");
+        if (!initialized_) throw HSMError("FileHSM not initialized");
         nocturne::Bytes msg(data, data+len);
-        
+
         // Create temporary array for signing (will be zeroed automatically)
-        std::array<uint8_t, crypto_sign_SECRETKEYBYTES> temp_sk;
+        std::array<uint8_t, crypto_sign_SECRETKEYBYTES> temp_sk{};
         std::memcpy(temp_sk.data(), secure_sk_.get(), crypto_sign_SECRETKEYBYTES);
-        
-        auto result = nocturne::ed25519_sign(msg, temp_sk);
-        
+
+        // Use deterministic Ed25519 signing (RFC8032) already provided by libsodium detached API
+        std::array<uint8_t, crypto_sign_BYTES> sig = nocturne::ed25519_sign(msg, temp_sk);
+
         // Zero the temporary array
         side_channel_protection::secure_zero_memory(temp_sk.data(), temp_sk.size());
-        
-        return result;
+
+        return sig;
     }
     
     std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() override {
@@ -1740,40 +1764,18 @@ public:
             throw std::runtime_error("HSM key label cannot be empty");
         }
         
-        // TODO: Initialize PKCS#11 connection to HSM
-        // This would involve:
-        // 1. Loading PKCS#11 library
-        // 2. Opening session to token
-        // 3. Authenticating with PIN/password
-        // 4. Finding the specified key
-        
+        // For now, perform a best-effort placeholder that simulates a healthy HSM
+        // In production, replace this with real PKCS#11 init (dlopen, C_GetFunctionList, C_OpenSession, C_Login, etc.)
         initialized_ = true;
     }
     
     std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
         if (!initialized_) {
-            throw std::runtime_error("PKCS#11 HSM not initialized");
+            throw HSMError("PKCS#11 HSM not initialized");
         }
-        
-        // MILITARY-GRADE SIGNING: Use HSM for secure signing
-        nocturne::Bytes msg(data, data + len);
-        
-        // TODO: Implement actual PKCS#11 signing
-        // This would involve:
-        // 1. Creating signing session
-        // 2. Loading private key from HSM
-        // 3. Performing signature operation
-        // 4. Returning signature
-        
-        // For now, return a placeholder signature
-        std::array<uint8_t, crypto_sign_BYTES> signature{};
-        randombytes_buf(signature.data(), signature.size());
-        
-        // Side-channel protection
-        side_channel_protection::random_delay();
-        side_channel_protection::memory_barrier();
-        
-        return signature;
+
+        // MILITARY-GRADE: If PKCS#11 not implemented, fail fast to avoid returning bogus signatures
+        throw HSMError("PKCS#11 signing not implemented in this build");
     }
     
     std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() override {
