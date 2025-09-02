@@ -83,7 +83,7 @@ Application
 ### Build
 ```bash
 # Clone
-git clone https://github.com/your-repo/Nocturne-KX.git
+git clone https://github.com/Bufffer/Nocturne-KX.git
 cd Nocturne-KX
 
 # Configure & build
