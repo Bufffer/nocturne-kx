@@ -1,3 +1,5 @@
+#define CATCH_CONFIG_MAIN
+#define NOCTURNE_UNIT_TEST
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <array>
