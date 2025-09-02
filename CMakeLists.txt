@@ -40,10 +40,15 @@ if(BUILD_TESTS)
         add_executable(nocturne-tests tests/test_main.cpp)
         target_link_libraries(nocturne-tests PRIVATE Catch2::Catch2 ${SODIUM_LIBRARIES})
         target_include_directories(nocturne-tests PRIVATE ${SODIUM_INCLUDE_DIRS})
-        
-        # Include test files
+
+        # Register tests in a robust way: prefer catch_discover_tests when available,
+        # otherwise register the test executable directly with CTest.
         include(CTest)
-        catch_discover_tests(nocturne-tests)
+        if(COMMAND catch_discover_tests)
+            catch_discover_tests(nocturne-tests)
+        else()
+            add_test(NAME nocturne-tests COMMAND nocturne-tests)
+        endif()
     else()
         message(WARNING "Catch2 not found, tests will be disabled")
     endif()
