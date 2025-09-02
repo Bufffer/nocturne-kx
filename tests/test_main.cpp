@@ -7,8 +7,9 @@
 #include <fstream>
 #include <sstream>
 
-// Include the main header (we'll need to extract the namespace)
+// Include the main source but instruct it to exclude the CLI `main` when building unit tests
 #define CATCH_CONFIG_MAIN
+#define NOCTURNE_UNIT_TEST
 #include "../nocturne-kx.cpp"
 
 using namespace nocturne;

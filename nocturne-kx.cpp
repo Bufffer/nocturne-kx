@@ -2100,7 +2100,7 @@ Notes:
 )";
 }
 
-#ifndef NOCTURNE_FUZZER_BUILD
+#if !defined(NOCTURNE_FUZZER_BUILD) && !defined(NOCTURNE_UNIT_TEST)
 int main(int argc, char** argv) {
     try {
         nocturne::check_sodium();
