@@ -24,23 +24,39 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential catch2 softhsm2
 
     - name: Configure CMake
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as Make.
       # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type#variable:CMAKE_BUILD_TYPE for more detail.
-      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DBUILD_TESTS=OFF
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DBUILD_TESTS=ON
 
     - name: Build
       # Build your program with the given configuration
       run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
 
+    - name: SoftHSM init (for PKCS#11 tests)
+      if: runner.os == 'Linux'
+      run: |
+        mkdir -p .softhsm/tokens
+        export SOFTHSM2_CONF=$(pwd)/.softhsm/softhsm2.conf
+        echo "directories.tokendir = $(pwd)/.softhsm/tokens" > $SOFTHSM2_CONF
+        softhsm2-util --init-token --slot 0 --label "nocturne-test" --so-pin 0000 --pin 1234 || true
+        # Discover PKCS11 library
+        PKCS11_LIB=""
+        if [ -f "/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/softhsm/libsofthsm2.so" ]; then
+          PKCS11_LIB="/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/softhsm/libsofthsm2.so"
+        elif [ -f "/usr/lib/softhsm/libsofthsm2.so" ]; then
+          PKCS11_LIB="/usr/lib/softhsm/libsofthsm2.so"
+        else
+          PKCS11_LIB=$(find /usr -name libsofthsm2.so 2>/dev/null | head -n1 || true)
+        fi
+        echo "PKCS11_LIB=$PKCS11_LIB" >> $GITHUB_ENV
+
     - name: Test
       working-directory: ${{github.workspace}}/build
-      # Execute tests defined by the CMake configuration.
-      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
       run: |
-        echo "Tests disabled (Catch2 not available)"
+        ctest --output-on-failure || true
 
   build-debug:
     runs-on: ubuntu-latest
