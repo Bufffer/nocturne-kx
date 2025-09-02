@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 #include <optional>
+// libsodium primitives/constants used in this header
+#include <sodium.h>
 
 namespace nocturne {
 
