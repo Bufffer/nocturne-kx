@@ -1772,13 +1772,15 @@ public:
     }
     
     std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
+        (void)data;  // Unused in stub - will be used in production implementation
+        (void)len;   // Unused in stub - will be used in production implementation
+
         if (!initialized_) {
             throw nocturne::HSMError("PKCS#11 HSM not initialized");
         }
 
         // MILITARY-GRADE: If PKCS#11 not implemented, fail fast to avoid returning bogus signatures
         throw nocturne::HSMError("PKCS#11 signing not implemented in this build");
-        return std::array<uint8_t, crypto_sign_BYTES>{};
     }
     
     std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() override {
