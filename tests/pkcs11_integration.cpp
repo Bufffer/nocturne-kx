@@ -1,4 +1,3 @@
-#define CATCH_CONFIG_MAIN
 #include <catch2/catch.hpp>
 #include "src/pkcs11_wrapper.hpp"
 
@@ -10,7 +9,6 @@ TEST_CASE("PKCS11 library loads (soft) and basic token enumeration", "pkcs11") {
         WARN("PKCS11_LIB not set - skipping SoftHSM integration test");
         return;
     }
-
     auto wrapper = nocturne::LibPKCS11Wrapper(std::string(libpath));
     REQUIRE(true); // constructor succeeded
 }
