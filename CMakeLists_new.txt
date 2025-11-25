@@ -117,24 +117,21 @@ target_link_libraries(nocturne-protocol PUBLIC
 set_target_properties(nocturne-protocol PROPERTIES LINKER_LANGUAGE CXX)
 
 # Security library - replay protection, rate limiting, audit logging
-add_library(nocturne-security
-    # src/security/replay_protection.cpp  # To be extracted
-    # src/security/rate_limiter.cpp  # To be extracted
-    # src/security/audit_logger.cpp  # To be extracted
-    # src/security/key_rotation.cpp  # NEW
-)
-target_include_directories(nocturne-security PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-target_link_libraries(nocturne-security PUBLIC
-    nocturne-core
-    nocturne-protocol
-)
-# Temporarily disable until source files extracted
-set_target_properties(nocturne-security PROPERTIES
-    LINKER_LANGUAGE CXX
-    EXCLUDE_FROM_ALL TRUE
-)
+# Note: Currently header-only, will be compiled when needed
+# Uncomment when source files are extracted:
+# add_library(nocturne-security
+#     src/security/replay_protection.cpp
+#     src/security/rate_limiter.cpp
+#     src/security/audit_logger.cpp
+#     src/security/key_rotation.cpp
+# )
+# target_include_directories(nocturne-security PUBLIC
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src
+# )
+# target_link_libraries(nocturne-security PUBLIC
+#     nocturne-core
+#     nocturne-protocol
+# )
 
 # HSM library - PKCS#11, TPM, FileHSM
 add_library(nocturne-hsm
