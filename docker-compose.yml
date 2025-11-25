@@ -1,0 +1,215 @@
+# =============================================================================
+# Nocturne-KX Docker Compose
+# =============================================================================
+# For local development and testing
+# Includes: nocturne-kx, SoftHSM2, Splunk (optional), ELK (optional)
+# =============================================================================
+
+version: '3.9'
+
+services:
+  # ---------------------------------------------------------------------------
+  # Nocturne-KX Main Service
+  # ---------------------------------------------------------------------------
+  nocturne-kx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_TYPE: Release
+    image: nocturne-kx:3.0.0
+    container_name: nocturne-kx
+    hostname: nocturne-kx
+
+    # Security settings
+    read_only: true  # Read-only root filesystem
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:unconfined  # May need custom seccomp profile
+    cap_drop:
+      - ALL
+    # cap_add:  # Only add if needed
+    #   - NET_BIND_SERVICE
+
+    # User (non-root)
+    user: "65532:65532"
+
+    # Environment variables
+    environment:
+      - NOCTURNE_AUDIT_LOG=/state/audit.jsonl
+      - NOCTURNE_LOG_LEVEL=DEBUG
+      - NOCTURNE_DISABLE_RANDOM_DELAY=0
+      - NOCTURNE_HSM_PASSPHRASE=${NOCTURNE_HSM_PASSPHRASE:-}
+      - PKCS11_LIB=/usr/lib/softhsm/libsofthsm2.so
+
+    # Volumes
+    volumes:
+      - ./keys:/keys:ro  # Read-only keys
+      - ./state:/state:rw  # Read-write state
+      - ./logs:/logs:rw  # Logs
+      - /tmp  # Temp directory (ephemeral)
+
+    # Command (customize)
+    # command: ["--help"]
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+    # Health check
+    # healthcheck:
+    #   test: ["CMD", "/usr/local/bin/nocturne-kx", "--health-check"]
+    #   interval: 30s
+    #   timeout: 3s
+    #   retries: 3
+    #   start_period: 10s
+
+    # Networks
+    networks:
+      - nocturne-net
+
+    # Dependencies
+    depends_on:
+      - softhsm
+
+  # ---------------------------------------------------------------------------
+  # SoftHSM2 (for testing PKCS#11)
+  # ---------------------------------------------------------------------------
+  softhsm:
+    image: alpine:3.19
+    container_name: softhsm
+    hostname: softhsm
+
+    command: |
+      sh -c "
+        apk add --no-cache softhsm &&
+        softhsm2-util --init-token --slot 0 --label 'test-token' --so-pin 1234 --pin 5678 &&
+        tail -f /dev/null
+      "
+
+    volumes:
+      - softhsm-tokens:/var/lib/softhsm/tokens
+
+    networks:
+      - nocturne-net
+
+  # ---------------------------------------------------------------------------
+  # Splunk (Optional - for SIEM testing)
+  # ---------------------------------------------------------------------------
+  # splunk:
+  #   image: splunk/splunk:latest
+  #   container_name: splunk
+  #   hostname: splunk
+  #
+  #   environment:
+  #     - SPLUNK_START_ARGS=--accept-license
+  #     - SPLUNK_PASSWORD=changeme
+  #
+  #   ports:
+  #     - "8000:8000"  # Web UI
+  #     - "8088:8088"  # HEC
+  #     - "514:514/udp"  # Syslog UDP
+  #
+  #   volumes:
+  #     - splunk-data:/opt/splunk/var
+  #
+  #   networks:
+  #     - nocturne-net
+
+  # ---------------------------------------------------------------------------
+  # Elasticsearch (Optional - for ELK stack)
+  # ---------------------------------------------------------------------------
+  # elasticsearch:
+  #   image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+  #   container_name: elasticsearch
+  #   hostname: elasticsearch
+  #
+  #   environment:
+  #     - discovery.type=single-node
+  #     - xpack.security.enabled=false
+  #     - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+  #
+  #   ports:
+  #     - "9200:9200"
+  #
+  #   volumes:
+  #     - elasticsearch-data:/usr/share/elasticsearch/data
+  #
+  #   networks:
+  #     - nocturne-net
+
+  # ---------------------------------------------------------------------------
+  # Kibana (Optional - for ELK stack)
+  # ---------------------------------------------------------------------------
+  # kibana:
+  #   image: docker.elastic.co/kibana/kibana:8.11.0
+  #   container_name: kibana
+  #   hostname: kibana
+  #
+  #   environment:
+  #     - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+  #
+  #   ports:
+  #     - "5601:5601"
+  #
+  #   depends_on:
+  #     - elasticsearch
+  #
+  #   networks:
+  #     - nocturne-net
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  nocturne-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  softhsm-tokens:
+    driver: local
+  # splunk-data:
+  #   driver: local
+  # elasticsearch-data:
+  #   driver: local
+
+# =============================================================================
+# Usage:
+# =============================================================================
+# Start all services:
+#   docker-compose up -d
+#
+# Start specific service:
+#   docker-compose up -d nocturne-kx
+#
+# View logs:
+#   docker-compose logs -f nocturne-kx
+#
+# Execute command:
+#   docker-compose exec nocturne-kx nocturne-kx --help
+#
+# Stop all:
+#   docker-compose down
+#
+# Stop and remove volumes:
+#   docker-compose down -v
+#
+# Build and start:
+#   docker-compose up --build -d
+#
+# Security scan:
+#   docker-compose config
+#   docker scan nocturne-kx:3.0.0
+# =============================================================================

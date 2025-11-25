@@ -1,0 +1,377 @@
+---
+# =============================================================================
+# Nocturne-KX Kubernetes Deployment
+# =============================================================================
+# Security Features:
+# - Non-root user (uid 65532)
+# - Read-only root filesystem
+# - No privilege escalation
+# - Dropped all capabilities
+# - Resource limits
+# - Security context constraints
+# - Pod Security Standards: Restricted
+# =============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nocturne-kx
+  labels:
+    name: nocturne-kx
+    security: high
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nocturne-kx
+  namespace: nocturne-kx
+  labels:
+    app: nocturne-kx
+automountServiceAccountToken: false  # Security: Don't mount token unless needed
+
+---
+# ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nocturne-kx-config
+  namespace: nocturne-kx
+data:
+  # Audit logging configuration
+  audit-log-path: "/state/audit.jsonl"
+  audit-log-level: "INFO"
+
+  # Rate limiting configuration
+  rate-limit-max-requests-per-minute: "60"
+  rate-limit-max-requests-per-hour: "1000"
+
+  # Key rotation configuration
+  key-rotation-max-lifetime-days: "30"
+  key-rotation-max-operations: "1000000"
+
+---
+# Secret for sensitive configuration (base64 encoded)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nocturne-kx-secrets
+  namespace: nocturne-kx
+type: Opaque
+data:
+  # Example: echo -n "your-hsm-pin" | base64
+  hsm-pin: ""  # Set this in production
+  # Example: echo -n "your-passphrase" | base64
+  hsm-passphrase: ""  # Set this in production
+
+---
+# PersistentVolumeClaim for keys (read-only in production)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nocturne-kx-keys
+  namespace: nocturne-kx
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: standard  # Use encrypted storage class in production
+
+---
+# PersistentVolumeClaim for state (read-write)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nocturne-kx-state
+  namespace: nocturne-kx
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard  # Use encrypted storage class in production
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nocturne-kx
+  namespace: nocturne-kx
+  labels:
+    app: nocturne-kx
+    version: v3.0.0
+spec:
+  replicas: 1  # Scale as needed
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: nocturne-kx
+  template:
+    metadata:
+      labels:
+        app: nocturne-kx
+        version: v3.0.0
+      annotations:
+        # Prometheus metrics scraping
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+        # Security scanning
+        container.apparmor.security.beta.kubernetes.io/nocturne-kx: runtime/default
+    spec:
+      serviceAccountName: nocturne-kx
+      automountServiceAccountToken: false
+
+      # Security context for pod
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532  # nonroot user from distroless
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+        supplementalGroups: []
+
+      # Init container for key setup (if needed)
+      # initContainers:
+      # - name: key-setup
+      #   image: nocturne-kx:3.0.0
+      #   command: ["/usr/local/bin/nocturne-kx"]
+      #   args: ["gen-receiver", "/keys"]
+      #   volumeMounts:
+      #   - name: keys
+      #     mountPath: /keys
+
+      containers:
+      - name: nocturne-kx
+        image: nocturne-kx:3.0.0
+        imagePullPolicy: IfNotPresent
+
+        # Security context for container
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          capabilities:
+            drop:
+              - ALL
+          # No capabilities added
+
+        # Command and args (customize for your use case)
+        # command: ["/usr/local/bin/nocturne-kx"]
+        # args: ["--daemon", "--config", "/config/nocturne-kx.yaml"]
+
+        # Environment variables from ConfigMap
+        env:
+        - name: NOCTURNE_AUDIT_LOG
+          valueFrom:
+            configMapKeyRef:
+              name: nocturne-kx-config
+              key: audit-log-path
+        - name: NOCTURNE_LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: nocturne-kx-config
+              key: audit-log-level
+        # Environment variables from Secret
+        - name: NOCTURNE_HSM_PIN
+          valueFrom:
+            secretKeyRef:
+              name: nocturne-kx-secrets
+              key: hsm-pin
+              optional: true
+        - name: NOCTURNE_HSM_PASSPHRASE
+          valueFrom:
+            secretKeyRef:
+              name: nocturne-kx-secrets
+              key: hsm-passphrase
+              optional: true
+
+        # Volume mounts
+        volumeMounts:
+        - name: keys
+          mountPath: /keys
+          readOnly: true  # Keys are read-only
+        - name: state
+          mountPath: /state
+          readOnly: false  # State is read-write
+        - name: tmp
+          mountPath: /tmp
+          readOnly: false  # Temp directory
+
+        # Resource limits (adjust based on workload)
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "500m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+
+        # Liveness probe (customize for your daemon)
+        # livenessProbe:
+        #   exec:
+        #     command:
+        #     - /usr/local/bin/nocturne-kx
+        #     - --health-check
+        #   initialDelaySeconds: 30
+        #   periodSeconds: 10
+        #   timeoutSeconds: 5
+        #   failureThreshold: 3
+
+        # Readiness probe (customize for your daemon)
+        # readinessProbe:
+        #   exec:
+        #     command:
+        #     - /usr/local/bin/nocturne-kx
+        #     - --ready-check
+        #   initialDelaySeconds: 10
+        #   periodSeconds: 5
+        #   timeoutSeconds: 3
+        #   failureThreshold: 3
+
+      # Volumes
+      volumes:
+      - name: keys
+        persistentVolumeClaim:
+          claimName: nocturne-kx-keys
+      - name: state
+        persistentVolumeClaim:
+          claimName: nocturne-kx-state
+      - name: tmp
+        emptyDir:
+          sizeLimit: 100Mi
+
+      # Node affinity (optional - for specific node pools)
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #       - matchExpressions:
+      #         - key: security-level
+      #           operator: In
+      #           values:
+      #           - high
+      #           - military
+
+      # Tolerations (optional - for tainted nodes)
+      # tolerations:
+      # - key: "security-level"
+      #   operator: "Equal"
+      #   value: "high"
+      #   effect: "NoSchedule"
+
+---
+# Service (if exposing as network service)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nocturne-kx
+  namespace: nocturne-kx
+  labels:
+    app: nocturne-kx
+spec:
+  type: ClusterIP  # Use LoadBalancer or NodePort if external access needed
+  selector:
+    app: nocturne-kx
+  ports:
+  - name: main
+    protocol: TCP
+    port: 8443
+    targetPort: 8443
+  # - name: metrics
+  #   protocol: TCP
+  #   port: 9090
+  #   targetPort: 9090
+
+---
+# NetworkPolicy (Zero-Trust - deny all by default)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nocturne-kx-netpol
+  namespace: nocturne-kx
+spec:
+  podSelector:
+    matchLabels:
+      app: nocturne-kx
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from specific namespaces/pods only
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: authorized-clients
+    ports:
+    - protocol: TCP
+      port: 8443
+  egress:
+  # Allow egress to DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow egress to SIEM (customize as needed)
+  # - to:
+  #   - podSelector: {}
+  #   ports:
+  #   - protocol: TCP
+  #     port: 514  # Syslog
+
+---
+# PodDisruptionBudget (for high availability)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nocturne-kx-pdb
+  namespace: nocturne-kx
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: nocturne-kx
+
+# =============================================================================
+# Deployment Instructions:
+# =============================================================================
+# 1. Create namespace:
+#    kubectl apply -f k8s/deployment.yaml
+#
+# 2. Set secrets:
+#    kubectl create secret generic nocturne-kx-secrets \
+#      --from-literal=hsm-pin='your-pin' \
+#      --from-literal=hsm-passphrase='your-passphrase' \
+#      -n nocturne-kx
+#
+# 3. Deploy:
+#    kubectl apply -f k8s/deployment.yaml
+#
+# 4. Verify:
+#    kubectl get pods -n nocturne-kx
+#    kubectl logs -f -n nocturne-kx deployment/nocturne-kx
+#
+# 5. Security audit:
+#    kubectl auth can-i --list -n nocturne-kx --as=system:serviceaccount:nocturne-kx:nocturne-kx
+#    kubectl get psp  # Check PodSecurityPolicy
+#
+# 6. Access pod:
+#    kubectl exec -it -n nocturne-kx deployment/nocturne-kx -- /bin/sh  # Won't work with distroless
+#    kubectl debug -it -n nocturne-kx deployment/nocturne-kx --image=busybox
+# =============================================================================
