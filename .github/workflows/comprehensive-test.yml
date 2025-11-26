@@ -204,12 +204,18 @@ jobs:
         echo "TEST 8: Signed Encryption"
         echo "========================================="
 
+        # Debug: Check current directory and files
+        echo "Current directory: $(pwd)"
+        echo "Test keys directory contents:"
+        ls -la test-keys/
+
         echo "Test signed message" > signed-message.txt
 
-        # Encrypt with signature
+        # Encrypt with signature (using absolute path)
+        echo "Encrypting with signature..."
         "$BINARY" encrypt \
           --rx-pk test-keys/receiver_x25519_pk.bin \
-          --sign-hsm-uri file://test-keys/sender_ed25519_sk.bin \
+          --sign-hsm-uri "file://$(pwd)/test-keys/sender_ed25519_sk.bin" \
           --in signed-message.txt \
           --out signed-encrypted.bin
 
@@ -218,7 +224,10 @@ jobs:
           exit 1
         fi
 
+        echo "Encrypted file created: $(stat -c%s signed-encrypted.bin) bytes"
+
         # Decrypt and verify signature
+        echo "Decrypting and verifying signature..."
         "$BINARY" decrypt \
           --rx-pk test-keys/receiver_x25519_pk.bin \
           --rx-sk test-keys/receiver_x25519_sk.bin \
@@ -233,6 +242,9 @@ jobs:
 
         if ! diff signed-message.txt signed-decrypted.txt; then
           echo "❌ Signed decrypted content doesn't match"
+          cat signed-message.txt
+          echo "---"
+          cat signed-decrypted.txt
           exit 1
         fi
 
