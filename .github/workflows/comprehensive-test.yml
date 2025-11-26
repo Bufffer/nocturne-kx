@@ -284,16 +284,22 @@ jobs:
         echo "First decryption: ✅"
 
         # Second decryption should fail (replay attack)
-        if "$BINARY" decrypt \
+        set +e  # Temporarily allow errors
+        REPLAY_OUTPUT=$("$BINARY" decrypt \
           --rx-pk test-keys/receiver_x25519_pk.bin \
           --rx-sk test-keys/receiver_x25519_sk.bin \
           --replay-db replay-test/replay.db \
           --mac-key replay-test/mac.key \
           --in replay-encrypted.bin \
-          --out replay-decrypted2.txt 2>&1 | grep -i "replay\|duplicate"; then
+          --out replay-decrypted2.txt 2>&1)
+        REPLAY_EXIT=$?
+        set -e  # Re-enable error checking
+
+        if [ $REPLAY_EXIT -ne 0 ] && echo "$REPLAY_OUTPUT" | grep -qi "replay"; then
           echo "✅ Replay attack correctly detected"
         else
-          echo "⚠️  Replay detection behavior unclear"
+          echo "⚠️  Replay detection behavior unclear (exit=$REPLAY_EXIT)"
+          echo "Output: $REPLAY_OUTPUT"
         fi
 
         # Check if replay DB was created
