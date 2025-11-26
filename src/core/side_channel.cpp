@@ -71,7 +71,7 @@ void secure_random_fill(uint8_t* buffer, size_t len) {
 }
 
 bool constant_time_string_compare(const std::string& a, const std::string& b) {
-    // MILITARY-GRADE FIX: No early return on size mismatch
+    // No early return on size mismatch
     // Always operate on fixed-size buffer to prevent timing leakage
 
     constexpr size_t MAX_SIZE = 8192; // Maximum comparison size

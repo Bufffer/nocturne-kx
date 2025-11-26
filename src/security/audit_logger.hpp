@@ -163,7 +163,7 @@ struct AuditLoggerConfig {
 };
 
 /**
- * @brief MILITARY-GRADE Audit Logger
+ * @brief Enterprise-Grade Audit Logger
  *
  * Features:
  * - Hash-chained tamper-evident logging (BLAKE2b)

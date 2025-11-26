@@ -57,9 +57,9 @@ FROM gcr.io/distroless/cc-debian12:nonroot
 # Metadata
 LABEL maintainer="serdarogluibrahim@gmail.com" \
       org.opencontainers.image.title="Nocturne-KX" \
-      org.opencontainers.image.description="Military-grade cryptographic communication toolkit" \
+      org.opencontainers.image.description="Modern end-to-end cryptographic communication toolkit" \
       org.opencontainers.image.version="3.0.0" \
-      org.opencontainers.image.vendor="Anthropic" \
+      org.opencontainers.image.vendor="Open Source" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/Bufffer/Nocturne-KX" \
       security.hardened="true" \

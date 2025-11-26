@@ -84,7 +84,7 @@ namespace filehsm_secure_storage {
 #include <immintrin.h>
 #endif
 
-// MILITARY-GRADE SECURITY CONSTANTS (Global namespace for accessibility)
+// SECURITY CONSTANTS (Global namespace for accessibility)
 constexpr size_t MAX_PACKET_SIZE = 1024 * 1024;      // 1MB maximum packet size
 constexpr size_t MAX_AAD_SIZE = 64 * 1024;           // 64KB maximum AAD size
 constexpr size_t MAX_CIPHERTEXT_SIZE = 1024 * 1024;  // 1MB maximum ciphertext size
@@ -106,7 +106,7 @@ constexpr size_t MAX_ALLOCATION_SIZE = 100 * 1024 * 1024; // 100MB maximum alloc
  7) More defensive coding: strict length checks, fewer implicit casts, and explicit zeroing.
 
  IMPORTANT SECURITY NOTES:
- - This remains *prototype* code. It is NOT a certified military-grade library.
+ - This remains *prototype* code. It is NOT production-ready without formal security audit.
  - For production you MUST: obtain formal specification, peer review, formal verification, and an independent security audit.
  - Replace the simple ratchet with a formal Double Ratchet or Noise-based handshake if you want forward secrecy + post-compromise recovery.
  - Integrate HSMs using validated PKCS#11 modules and ensure private keys never leave secure hardware.
@@ -752,7 +752,7 @@ namespace memory_protection {
             #endif
         }
         
-        // MILITARY-GRADE SECURE MEMORY ALLOCATION: Prevent memory exhaustion and corruption
+        // SECURE MEMORY ALLOCATION: Prevent memory exhaustion and corruption
         void* allocate_with_guards(size_t size) {
             // CRITICAL SECURITY CHECK: Prevent allocation size attacks
             if (size == 0) {
@@ -842,7 +842,7 @@ namespace memory_protection {
         explicit SecureAllocator(const MemoryProtectionConfig& config = MemoryProtectionConfig{})
             : config_(config) {}
         
-        // MILITARY-GRADE SECURE MEMORY ALLOCATION: Comprehensive security validation
+        // SECURE MEMORY ALLOCATION: Comprehensive security validation
         void* allocate(size_t size) {
             std::lock_guard<std::mutex> lock(mutex_);
             
@@ -1049,7 +1049,7 @@ namespace memory_protection {
 
 namespace nocturne {
 
-// MILITARY-GRADE SECURITY CONSTANTS
+// SECURITY CONSTANTS
 constexpr uint8_t VERSION = 0x03;
 constexpr uint8_t FLAG_HAS_SIG = 0x01;
 constexpr uint8_t FLAG_HAS_RATCHET = 0x02;
@@ -1184,7 +1184,7 @@ inline Packet deserialize(const Bytes& in) {
     Packet p;
     size_t off = 0;
     
-    // MILITARY-GRADE INPUT VALIDATION: Prevent buffer overflow and integer overflow attacks
+    // INPUT VALIDATION: Prevent buffer overflow and integer overflow attacks
     auto need = [&](size_t n) { 
         // Check for integer overflow in addition
         if (n > SIZE_MAX - off) {
@@ -1234,7 +1234,7 @@ inline Packet deserialize(const Bytes& in) {
 
     if (p.version != nocturne::VERSION) throw std::runtime_error("unsupported version");
 
-    // MILITARY-GRADE SIZE VALIDATION: Prevent DoS attacks
+    // SIZE VALIDATION: Prevent DoS attacks
     if (aad_len > MAX_AAD_SIZE) {
         throw std::runtime_error("AAD size exceeds maximum allowed");
     }
@@ -1744,7 +1744,7 @@ public:
     }
 };
 
-// MILITARY-GRADE HSM INTEGRATION: Basic PKCS#11 implementation
+// HSM INTEGRATION: Basic PKCS#11 implementation
 class PKCS11HSM : public HSMInterface {
 private:
     std::string token_id_;
@@ -1758,7 +1758,7 @@ public:
     PKCS11HSM(const std::string& token_id, const std::string& key_label) 
         : token_id_(token_id), key_label_(key_label), temp_buffer_(crypto_sign_SECRETKEYBYTES) {
         
-        // MILITARY-GRADE HSM VALIDATION: Validate HSM parameters
+        // HSM VALIDATION: Validate HSM parameters
         if (token_id.empty()) {
             throw std::runtime_error("HSM token ID cannot be empty");
         }
@@ -1779,7 +1779,7 @@ public:
             throw nocturne::HSMError("PKCS#11 HSM not initialized");
         }
 
-        // MILITARY-GRADE: If PKCS#11 not implemented, fail fast to avoid returning bogus signatures
+        // If PKCS#11 not implemented, fail fast to avoid returning bogus signatures
         throw nocturne::HSMError("PKCS#11 signing not implemented in this build");
     }
     
@@ -2179,7 +2179,7 @@ int main(int argc, char** argv) {
             std::string aad_str, signer_uri;
             uint32_t rotation_id = 0; bool use_ratchet = false;
             
-            // MILITARY-GRADE ERROR HANDLING: Comprehensive input validation and error management
+            // ERROR HANDLING: Comprehensive input validation and error management
             try {
                 for (int i=2;i<argc;++i) {
                     std::string a = argv[i];
@@ -2236,7 +2236,7 @@ int main(int argc, char** argv) {
             if (rxpk_bytes.size() != crypto_kx_PUBLICKEYBYTES) throw std::runtime_error("receiver pk size mismatch");
             std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rxpk_arr{}; std::memcpy(rxpk_arr.data(), rxpk_bytes.data(), rxpk_arr.size());
 
-            // MILITARY-GRADE HSM VALIDATION: Comprehensive HSM URI validation and error handling
+            // HSM VALIDATION: Comprehensive HSM URI validation and error handling
             std::unique_ptr<HSMInterface> signer = nullptr;
             if (!signer_uri.empty()) {
                 try {
@@ -2260,7 +2260,7 @@ int main(int argc, char** argv) {
                         
                         signer = std::make_unique<FileHSM>(hsm_path);
                     } else if (signer_uri.rfind("hsm://",0)==0) {
-                        // MILITARY-GRADE HSM INTEGRATION: PKCS#11 implementation
+                        // HSM INTEGRATION: PKCS#11 implementation
                         std::string hsm_spec = signer_uri.substr(strlen("hsm://"));
                         if (hsm_spec.empty()) {
                             throw std::runtime_error("empty HSM specification in URI");

@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ========================================
-# MILITARY-GRADE BUILD OPTIONS
+# BUILD OPTIONS
 # ========================================
 option(ENABLE_FIPS "Enable FIPS 140-3 mode" ON)
 option(BUILD_SHARED_LIBS "Build shared libraries instead of static" OFF)

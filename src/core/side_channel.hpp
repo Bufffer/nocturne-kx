@@ -105,7 +105,7 @@ void secure_random_fill(uint8_t* buffer, size_t len);
 bool constant_time_string_compare(const std::string& a, const std::string& b);
 
 /**
- * @brief MILITARY-GRADE: Fixed-size constant-time comparison (no size leakage)
+ * @brief Fixed-size constant-time comparison (no size leakage)
  * @tparam N Size of arrays
  * @param a First array
  * @param b Second array
@@ -118,7 +118,7 @@ inline bool constant_time_compare_fixed(const uint8_t (&a)[N], const uint8_t (&b
 }
 
 /**
- * @brief MILITARY-GRADE: Branchless conditional select (template version)
+ * @brief Branchless conditional select (template version)
  * @tparam T Trivially copyable type
  * @param a First value
  * @param b Second value
@@ -144,7 +144,7 @@ inline T ct_select(T a, T b, bool condition) {
 }
 
 /**
- * @brief MILITARY-GRADE: Cache-timing resistant table lookup
+ * @brief Cache-timing resistant table lookup
  * @tparam T Element type
  * @tparam N Table size
  * @param table Lookup table

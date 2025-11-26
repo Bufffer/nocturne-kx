@@ -91,7 +91,7 @@ struct RotationEvent {
 };
 
 /**
- * @brief MILITARY-GRADE Key Rotation Manager
+ * @brief Enterprise-Grade Key Rotation Manager
  *
  * Features:
  * - Automatic rotation based on time/count/volume
