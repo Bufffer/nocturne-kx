@@ -1954,7 +1954,7 @@ nocturne::Bytes decrypt_packet(
         Bytes signed_region;
         auto ser_no_sig = serialize(Packet{
             .version = p.version,
-            .flags   = p.flags,
+            .flags   = p.flags & ~FLAG_HAS_SIG,
             .rotation_id = p.rotation_id,
             .eph_pk  = p.eph_pk,
             .nonce   = p.nonce,
