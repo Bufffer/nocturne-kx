@@ -68,6 +68,9 @@ docs/_build/
 docs/html/
 docs/latex/
 
+# Documentation website (separate repo)
+WebDoc/
+
 # Coverage reports
 *.gcov
 *.gcda
