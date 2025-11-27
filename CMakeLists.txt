@@ -99,8 +99,10 @@ set(NOCTURNE_CORE_SOURCES
 if(ENABLE_PQC)
     set(NOCTURNE_PQC_SOURCES
         src/pqc/kem/kem_interface.cpp
-        # ML-KEM wrapper will be added next
-        # Hybrid KEM will be added next
+        src/pqc/kem/kem_factory.cpp
+        # Headers (header-only, included via include)
+        # src/pqc/kem/mlkem_wrapper.hpp
+        # src/pqc/kem/hybrid_kem.hpp
     )
 
     add_compile_definitions(NOCTURNE_ENABLE_PQC)
