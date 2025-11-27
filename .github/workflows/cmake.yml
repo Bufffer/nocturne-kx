@@ -104,6 +104,7 @@ jobs:
       run: |
         cmake -B ${{github.workspace}}/build-memory \
           -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_C_COMPILER=clang \
           -DCMAKE_CXX_COMPILER=clang++ \
           -DBUILD_TESTS=OFF \
           -DCMAKE_CXX_FLAGS="-fsanitize=memory -fno-omit-frame-pointer" \
@@ -133,6 +134,7 @@ jobs:
       run: |
         cmake -B ${{github.workspace}}/build-fuzz \
           -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_C_COMPILER=clang \
           -DCMAKE_CXX_COMPILER=clang++ \
           -DBUILD_FUZZER=ON \
           -DBUILD_TESTS=OFF \

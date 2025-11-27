@@ -1,0 +1,28 @@
+# Gitleaks configuration for Nocturne-KX
+# Suppresses false positives from domain separation strings
+
+title = "Gitleaks Configuration for Nocturne-KX"
+
+[allowlist]
+description = "Allowlist for known false positives"
+
+# Allow domain separation constants (not actual secrets)
+regexes = [
+    '''nocturne-hybrid-kem-v\d+''',
+    '''nocturne-[a-z-]+-v\d+'''
+]
+
+# Suppress specific paths
+paths = [
+    '''\.gitleaks\.toml''',
+    '''tests/.*'''
+]
+
+# Suppress specific line matches
+[[allowlist.regexTarget]]
+regex = '''const char\* domain = "nocturne-'''
+description = "Domain separation constants for cryptographic operations"
+
+[[allowlist.regexTarget]]
+regex = '''key = "nocturne-'''
+description = "Domain separation strings used in KDF"
