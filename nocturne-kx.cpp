@@ -1,3 +1,22 @@
+/**
+ * @file nocturne-kx.cpp
+ * @brief Nocturne-KX: Post-Quantum Secure Key Exchange and Messaging Protocol
+ *
+ * Copyright (c) 2025 Halil İbrahim Serdaroğlu
+ *
+ * This software is the exclusive property of Halil İbrahim Serdaroğlu.
+ * All rights reserved.
+ *
+ * Patent Pending: Hybrid Post-Quantum KEM System
+ * Trademark: Nocturne-KX™
+ *
+ * Licensed under the MIT License (see LICENSE file)
+ *
+ * @author Halil İbrahim Serdaroğlu
+ * @version 4.0.0
+ * @date 2025
+ */
+
 #include <array>
 #include <cstdint>
 #include <cstring>

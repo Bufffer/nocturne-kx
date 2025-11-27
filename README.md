@@ -400,17 +400,42 @@ Contributions are welcome! Please:
 
 ---
 
+## Intellectual Property
+
+**Copyright © 2025 Halil İbrahim Serdaroğlu. All rights reserved.**
+
+### Ownership
+This software is the exclusive intellectual property of **Halil İbrahim Serdaroğlu**.
+
+### Patents
+- **Patent Pending**: Hybrid Post-Quantum Key Encapsulation Mechanism (Turkey Patent Office)
+- **Patent Pending**: Bidirectional Replay Protection with Prefix-Based Counter Separation
+
+### Trademarks
+- **Nocturne-KX™** is a trademark of Halil İbrahim Serdaroğlu
+
+### Trade Secrets
+Certain implementation details, optimizations, and security configurations are proprietary trade secrets.
+
+---
+
 ## License
 
 MIT License - see [`LICENSE`](LICENSE) file for details.
+
+**Important**: While the code is open source under MIT License, the name "Nocturne-KX™" is a registered trademark. Patent rights are reserved for specific innovations described in patent applications.
 
 ---
 
 ## Contact
 
+**Author:** Halil İbrahim Serdaroğlu
 **Email:** serdarogluibrahim@gmail.com
+**GitHub:** [@Bufffer](https://github.com/Bufffer)
 
 For general questions, feature requests, or bug reports (non-security), please open a GitHub issue.
+
+For commercial licensing inquiries, contact directly via email.
 
 ---
 

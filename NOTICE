@@ -1,0 +1,193 @@
+NOCTURNE-KX
+Copyright © 2025 Halil İbrahim Serdaroğlu
+All Rights Reserved
+
+================================================================================
+
+OWNERSHIP NOTICE
+================================================================================
+
+This software and all associated documentation, designs, inventions, and
+intellectual property are the exclusive property of:
+
+    Halil İbrahim Serdaroğlu
+    Email: serdarogluibrahim@gmail.com
+    GitHub: @Bufffer
+
+================================================================================
+
+PATENT NOTICE
+================================================================================
+
+The following innovations are patent pending and protected by intellectual
+property law:
+
+1. HYBRID POST-QUANTUM KEY ENCAPSULATION MECHANISM
+   - Application: Turkey Patent Office (TPE)
+   - Status: Patent Pending
+   - Invention: X25519 + ML-KEM-1024 hybrid KEM with domain separation
+
+2. BIDIRECTIONAL REPLAY PROTECTION SYSTEM
+   - Application: Turkey Patent Office (TPE)
+   - Status: Patent Pending
+   - Invention: Prefix-based counter separation for replay detection
+
+Patent applications are in progress. Use of these patented methods requires
+written permission from the patent holder: Halil İbrahim Serdaroğlu.
+
+================================================================================
+
+TRADEMARK NOTICE
+================================================================================
+
+"Nocturne-KX" and the Nocturne-KX logo are trademarks of Halil İbrahim
+Serdaroğlu.
+
+Unauthorized use of these trademarks is prohibited.
+
+Registration: Turkey Patent and Trademark Office (in progress)
+
+================================================================================
+
+TRADE SECRET NOTICE
+================================================================================
+
+Certain implementation details, algorithms, optimizations, and security
+configurations contained in this software constitute trade secrets of
+Halil İbrahim Serdaroğlu and are protected by trade secret law.
+
+These include but are not limited to:
+- Side-channel protection timing parameters
+- Security configuration defaults
+- Optimization techniques
+- Internal algorithms
+
+Disclosure of trade secrets without authorization is prohibited.
+
+================================================================================
+
+LICENSE
+================================================================================
+
+This software is licensed under the MIT License with the following additions:
+
+1. The MIT License grants permission to use, modify, and distribute the CODE.
+
+2. The MIT License DOES NOT grant rights to:
+   - Patented inventions (see Patent Notice above)
+   - Trademarks (see Trademark Notice above)
+   - Trade secrets (see Trade Secret Notice above)
+
+3. Patent rights are reserved. Commercial use of patented methods requires
+   separate patent license.
+
+4. Trademark rights are reserved. Use of "Nocturne-KX" name requires permission.
+
+See LICENSE file for full MIT License text.
+
+================================================================================
+
+THIRD-PARTY COMPONENTS
+================================================================================
+
+This software includes or depends on the following third-party components:
+
+1. libsodium
+   - License: ISC License
+   - Copyright: Frank Denis and contributors
+   - Website: https://libsodium.org
+
+2. liboqs (Open Quantum Safe)
+   - License: MIT License
+   - Copyright: Open Quantum Safe Project
+   - Website: https://openquantumsafe.org
+
+3. Catch2 (Testing Framework)
+   - License: Boost Software License 1.0
+   - Copyright: Catch2 contributors
+   - Website: https://github.com/catchorg/Catch2
+
+================================================================================
+
+CRYPTOGRAPHIC NOTICE
+================================================================================
+
+This software implements cryptographic algorithms subject to export control
+regulations in various jurisdictions. Users are responsible for compliance
+with applicable export control laws.
+
+The following cryptographic algorithms are implemented:
+- ML-KEM-1024 (NIST FIPS 203) - Post-Quantum KEM
+- X25519 (RFC 7748) - Elliptic Curve Diffie-Hellman
+- Ed25519 (RFC 8032) - Digital Signatures
+- XChaCha20-Poly1305 (RFC 7539) - Authenticated Encryption
+- BLAKE2b - Cryptographic Hash Function
+- Argon2 - Password Hashing
+
+================================================================================
+
+SECURITY DISCLOSURE
+================================================================================
+
+Security vulnerabilities should be reported to:
+    Email: serdarogluibrahim@gmail.com
+    Subject: [SECURITY] Nocturne-KX Vulnerability
+
+Please DO NOT file public GitHub issues for security vulnerabilities.
+
+Responsible disclosure is appreciated. Security researchers will be acknowledged
+in security advisories (with permission).
+
+================================================================================
+
+WARRANTY DISCLAIMER
+================================================================================
+
+THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL HALIL İBRAHİM SERDAROĞLU BE LIABLE FOR ANY CLAIM, DAMAGES,
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE,
+ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+================================================================================
+
+CONTRIBUTION AGREEMENT
+================================================================================
+
+By contributing to this project, you agree to:
+
+1. Assign all intellectual property rights in your contributions to
+   Halil İbrahim Serdaroğlu
+
+2. Certify that your contributions are your original work
+
+3. Grant Halil İbrahim Serdaroğlu perpetual, worldwide, royalty-free license
+   to use your contributions in any way
+
+4. Waive any moral rights in your contributions
+
+Contributors must sign a Contributor License Agreement (CLA) before
+contributions can be accepted.
+
+================================================================================
+
+CONTACT INFORMATION
+================================================================================
+
+For licensing inquiries:
+    Halil İbrahim Serdaroğlu
+    Email: serdarogluibrahim@gmail.com
+
+For general questions:
+    GitHub Issues: https://github.com/Bufffer/nocturne-kx/issues
+
+For commercial licensing:
+    Contact via email for enterprise licensing options
+
+================================================================================
+
+Last Updated: January 2025
+Version: 4.0.0
