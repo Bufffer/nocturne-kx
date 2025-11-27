@@ -2185,13 +2185,20 @@ int main(int argc, char** argv) {
             try {
                 for (int i=2;i<argc;++i) {
                     std::string a = argv[i];
-                    auto need = [&](int){ 
+                    auto need = [&](int){
                         if (i+1>=argc) {
-                            throw std::runtime_error("missing value for argument: " + a); 
+                            throw std::runtime_error("missing value for argument: " + a);
                         }
-                        return std::string(argv[++i]); 
+                        return std::string(argv[++i]);
                     };
-                    
+
+                    // Skip global options (already parsed in main)
+                    if (a=="--rate-limit-store" || a=="--audit-log" || a=="--audit-sign-key" ||
+                        a=="--audit-anchor" || a=="--audit-worm-dir" || a=="--tpm-counter" || a=="--hsm-pass") {
+                        need(1); // consume the value
+                        continue;
+                    }
+
                     if      (a=="--rx-pk") rxpk = need(1);
                     else if (a=="--sign-hsm-uri") signer_uri = need(1);
                     else if (a=="--aad") aad_str = need(1);
@@ -2317,6 +2324,14 @@ int main(int argc, char** argv) {
             for (int i=2;i<argc;++i) {
                 std::string a = argv[i];
                 auto need = [&](int){ if (i+1>=argc) throw std::runtime_error("missing value for " + a); return std::string(argv[++i]); };
+
+                // Skip global options (already parsed in main)
+                if (a=="--rate-limit-store" || a=="--audit-log" || a=="--audit-sign-key" ||
+                    a=="--audit-anchor" || a=="--audit-worm-dir" || a=="--tpm-counter" || a=="--hsm-pass") {
+                    need(1); // consume the value
+                    continue;
+                }
+
                 if      (a=="--rx-pk") rxpk = need(1);
                 else if (a=="--rx-sk") rxsk = need(1);
                 else if (a=="--expect-signer") expectpk_path = need(1);
