@@ -1859,7 +1859,8 @@ nocturne::Bytes encrypt_packet(
     p.eph_pk = eph.pk;
 
     if (rdb) {
-        std::string rid = hexify(receiver_x25519_pk.data(), receiver_x25519_pk.size());
+        // Use "tx:" prefix for sender's outgoing counters
+        std::string rid = "tx:" + hexify(receiver_x25519_pk.data(), receiver_x25519_pk.size());
         uint64_t prev = rdb->get(rid);
         p.counter = prev + 1;
         rdb->set(rid, p.counter);
@@ -1980,20 +1981,21 @@ nocturne::Bytes decrypt_packet(
     }
 
     if (rdb) {
-        std::string rid = hexify(receiver_x25519_pk.data(), receiver_x25519_pk.size());
+        // Use "rx:" prefix for receiver's incoming counters
+        std::string rid = "rx:" + hexify(receiver_x25519_pk.data(), receiver_x25519_pk.size());
         uint64_t last = rdb->get(rid);
-        
+
         // Enhanced replay protection with gap detection
         if (p.counter <= last) {
             throw std::runtime_error("replay detected: counter too small");
         }
-        
+
         // Detect large gaps (potential message loss)
         if (p.counter > last + 1000) {
             // Log warning but don't fail (allows for legitimate gaps)
             std::cerr << "WARNING: Large counter gap detected: " << last << " -> " << p.counter << std::endl;
         }
-        
+
         rdb->set(rid, p.counter);
     }
 
