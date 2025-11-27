@@ -19,7 +19,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential liboqs-dev
 
     - name: Build project
       run: |

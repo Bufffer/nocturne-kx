@@ -24,7 +24,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential catch2 softhsm2
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential catch2 softhsm2 liboqs-dev
 
     - name: Configure CMake
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as Make.
@@ -70,7 +70,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential clang
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential clang liboqs-dev
 
     - name: Configure CMake with sanitizer
       run: |
@@ -98,7 +98,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential clang
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential clang liboqs-dev
 
     - name: Configure CMake with memory sanitizer
       run: |
@@ -128,7 +128,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential clang
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential clang liboqs-dev
 
     - name: Configure CMake for fuzzing
       run: |
@@ -138,9 +138,9 @@ jobs:
           -DCMAKE_CXX_COMPILER=clang++ \
           -DBUILD_FUZZER=ON \
           -DBUILD_TESTS=OFF \
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
           -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer" \
-          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=fuzzer,address,undefined" \
-          -DCMAKE_CXX_COMPILER_WORKS=TRUE
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=fuzzer,address,undefined"
 
     - name: Build fuzzer
       run: cmake --build ${{github.workspace}}/build-fuzz --config Debug
@@ -161,7 +161,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential cppcheck
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential cppcheck liboqs-dev
 
     - name: Static analysis with cppcheck
       run: |
