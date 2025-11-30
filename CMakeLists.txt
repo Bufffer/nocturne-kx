@@ -98,7 +98,8 @@ if(ENABLE_PQC)
 
         # Set variables for linking
         set(LIBOQS_LIBRARY oqs)
-        set(LIBOQS_INCLUDE_DIR ${liboqs_SOURCE_DIR}/src)
+        # Include both build directory (generated headers) and source directory
+        set(LIBOQS_INCLUDE_DIR ${liboqs_BINARY_DIR}/include ${liboqs_SOURCE_DIR}/src)
         set(LIBOQS_FOUND TRUE)
 
         message(STATUS "liboqs built from source successfully")

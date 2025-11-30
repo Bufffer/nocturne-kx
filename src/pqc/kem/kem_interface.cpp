@@ -13,14 +13,14 @@ namespace pqc {
 // KEMKeyPair destructor - securely wipe secret key
 KEMKeyPair::~KEMKeyPair() {
     if (!secret_key.empty()) {
-        side_channel_protection::secure_zero_memory(
+        side_channel::secure_zero_memory(
             secret_key.data(), secret_key.size());
     }
 }
 
 // KEMSharedSecret destructor - securely wipe shared secret
 KEMSharedSecret::~KEMSharedSecret() {
-    side_channel_protection::secure_zero_memory(
+    side_channel::secure_zero_memory(
         secret.data(), secret.size());
 }
 
