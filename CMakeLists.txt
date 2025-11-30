@@ -117,6 +117,7 @@ set(NOCTURNE_CORE_SOURCES
     src/handshake.hpp
     src/transport.hpp
     src/pkcs11_wrapper.cpp
+    src/core/side_channel.cpp
 )
 
 # PQC sources (conditionally compiled)
