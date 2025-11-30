@@ -72,13 +72,36 @@ if(ENABLE_PQC)
     )
 
     if(LIBOQS_LIBRARY AND LIBOQS_INCLUDE_DIR)
-        message(STATUS "Found liboqs: ${LIBOQS_LIBRARY}")
+        message(STATUS "Found system liboqs: ${LIBOQS_LIBRARY}")
         message(STATUS "liboqs include: ${LIBOQS_INCLUDE_DIR}")
         set(LIBOQS_FOUND TRUE)
     else()
-        message(WARNING "liboqs not found. PQC support will be disabled.")
-        message(WARNING "To enable PQC, install liboqs or set BUILD_LIBOQS=ON")
-        set(ENABLE_PQC OFF)
+        # If not found, build liboqs from source using FetchContent
+        message(STATUS "System liboqs not found. Building from source...")
+        include(FetchContent)
+
+        FetchContent_Declare(
+            liboqs
+            GIT_REPOSITORY https://github.com/open-quantum-safe/liboqs.git
+            GIT_TAG        0.12.0  # Latest stable release
+            GIT_SHALLOW    TRUE
+        )
+
+        # Configure liboqs build options
+        set(OQS_USE_OPENSSL OFF CACHE BOOL "Use OpenSSL" FORCE)
+        set(OQS_BUILD_ONLY_LIB ON CACHE BOOL "Build only library" FORCE)
+        set(OQS_DIST_BUILD OFF CACHE BOOL "Distribution build" FORCE)
+        set(OQS_ENABLE_TEST_CONSTANT_TIME OFF CACHE BOOL "Disable constant time tests" FORCE)
+
+        # Fetch and build liboqs
+        FetchContent_MakeAvailable(liboqs)
+
+        # Set variables for linking
+        set(LIBOQS_LIBRARY oqs)
+        set(LIBOQS_INCLUDE_DIR ${liboqs_SOURCE_DIR}/src)
+        set(LIBOQS_FOUND TRUE)
+
+        message(STATUS "liboqs built from source successfully")
     endif()
 endif()
 

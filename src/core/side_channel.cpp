@@ -15,16 +15,17 @@ void secure_zero_memory(void* ptr, size_t len) {
 }
 
 void random_delay() {
-    const char* env = std::getenv("NOCTURNE_DISABLE_RANDOM_DELAY");
-    if (env && *env) return;
+    // SECURITY FIX: Removed environment variable bypass
+    // Random delays are critical for timing attack mitigation and cannot be disabled
 
 #if defined(__has_include) && __has_include(<thread>)
+    // SECURITY: Increased delay range from 1-50μs to 100-500μs for better protection
     static thread_local std::mt19937 rng(std::random_device{}());
-    static thread_local std::uniform_int_distribution<int> dist(1, 50);
+    static thread_local std::uniform_int_distribution<int> dist(100, 500);
     std::this_thread::sleep_for(std::chrono::microseconds(dist(rng)));
 #else
     static std::mt19937 rng(std::random_device{}());
-    static std::uniform_int_distribution<int> dist(50, 200);
+    static std::uniform_int_distribution<int> dist(100, 500);
     volatile int dummy = 0;
     for (int i = 0; i < dist(rng); ++i) {
         dummy += i;

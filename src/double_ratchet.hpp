@@ -263,10 +263,18 @@ inline void DoubleRatchet::perform_dh_ratchet() {
 
 inline void DoubleRatchet::perform_symmetric_ratchet(bool is_sending) {
     if (is_sending) {
+        // SECURITY: Prevent integer overflow - critical for nonce safety
+        if (state_.send_message_count == UINT32_MAX) {
+            throw std::runtime_error("DR: send message counter exhausted - rekeying required");
+        }
         state_.send_message_key = derive_message_key(state_.send_chain_key);
         state_.send_chain_key = derive_chain_key(state_.send_chain_key, "nocturne-dr-send-next");
         state_.send_message_count++;
     } else {
+        // SECURITY: Prevent integer overflow
+        if (state_.recv_message_count == UINT32_MAX) {
+            throw std::runtime_error("DR: recv message counter exhausted - rekeying required");
+        }
         state_.recv_message_key = derive_message_key(state_.recv_chain_key);
         state_.recv_chain_key = derive_chain_key(state_.recv_chain_key, "nocturne-dr-recv-next");
         state_.recv_message_count++;
@@ -302,7 +310,22 @@ inline RatchetMessage DoubleRatchet::encrypt_message(const std::vector<uint8_t>&
     m.dh_public_key = state_.dh_public_key;
     m.prev_chain_count = state_.recv_chain_count;
     m.message_count = state_.send_message_count;
-    randombytes_buf(m.nonce.data(), m.nonce.size());
+
+    // SECURITY: Use deterministic nonce derived from message count
+    // This provides defense-in-depth against RNG failures
+    std::array<uint8_t, 32> nonce_key{};
+    crypto_generichash(nonce_key.data(), nonce_key.size(),
+        state_.send_message_key.data(), state_.send_message_key.size(),
+        reinterpret_cast<const unsigned char*>("nocturne-nonce"), sizeof("nocturne-nonce") - 1);
+
+    // Derive nonce from message count and key
+    std::array<uint8_t, 8> counter_bytes{};
+    for (int i = 0; i < 8; ++i) {
+        counter_bytes[i] = static_cast<uint8_t>((m.message_count >> (8 * i)) & 0xFF);
+    }
+    crypto_generichash(m.nonce.data(), m.nonce.size(),
+        counter_bytes.data(), counter_bytes.size(),
+        nonce_key.data(), nonce_key.size());
 
     std::vector<uint8_t> aad;
     aad.insert(aad.end(), m.dh_public_key.begin(), m.dh_public_key.end());
@@ -347,6 +370,15 @@ inline std::vector<uint8_t> DoubleRatchet::decrypt_message(const RatchetMessage&
         }
         pt.resize(static_cast<size_t>(pt_len));
         return pt;
+    }
+
+    // SECURITY: Enforce maximum message gap to prevent DoS attacks
+    constexpr uint32_t MAX_MESSAGE_GAP = 10000;
+    if (message.message_count > state_.recv_message_count) {
+        uint32_t gap = message.message_count - state_.recv_message_count;
+        if (gap > MAX_MESSAGE_GAP) {
+            throw std::runtime_error("DR: message gap too large - possible DoS attack");
+        }
     }
 
     while (state_.recv_message_count < message.message_count) {
