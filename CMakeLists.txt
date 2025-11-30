@@ -203,7 +203,7 @@ if(BUILD_TESTS)
             src/core/side_channel.cpp
         )
         target_link_libraries(hsm-comprehensive-test PRIVATE
-            Catch2::Catch2
+            Catch2::Catch2WithMain
             ${SODIUM_LIBRARIES}
         )
         target_include_directories(hsm-comprehensive-test PRIVATE
@@ -218,7 +218,7 @@ if(BUILD_TESTS)
             src/core/side_channel.cpp
         )
         target_link_libraries(side-channel-test PRIVATE
-            Catch2::Catch2
+            Catch2::Catch2WithMain
             ${SODIUM_LIBRARIES}
         )
         target_include_directories(side-channel-test PRIVATE
@@ -233,7 +233,7 @@ if(BUILD_TESTS)
             src/core/side_channel.cpp
         )
         target_link_libraries(protocol-integration-test PRIVATE
-            Catch2::Catch2
+            Catch2::Catch2WithMain
             ${SODIUM_LIBRARIES}
         )
         target_include_directories(protocol-integration-test PRIVATE
@@ -266,7 +266,7 @@ if(BUILD_TESTS)
                 src/pqc/kem/kem_factory.cpp
             )
             target_link_libraries(pqc-comprehensive-test PRIVATE
-                Catch2::Catch2
+                Catch2::Catch2WithMain
                 ${SODIUM_LIBRARIES}
                 ${LIBOQS_LIBRARY}
             )
