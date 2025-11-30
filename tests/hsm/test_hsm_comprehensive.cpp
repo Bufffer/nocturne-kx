@@ -318,7 +318,7 @@ TEST_CASE("HSM Audit Logging", "[hsm][audit]") {
                   strlen(wrong), sig.data(), sig.size());
 
         // Check audit trail
-        auto audit = hsm.get_audit_trail();
+        auto audit = hsm.get_audit_trail(std::nullopt, std::nullopt);
         REQUIRE(audit.size() >= 3);
 
         // Verify audit records
