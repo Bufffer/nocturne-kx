@@ -87,11 +87,32 @@ if(ENABLE_PQC)
             GIT_SHALLOW    TRUE
         )
 
-        # Configure liboqs build options
+        # Configure liboqs build options - MINIMAL BUILD for CI/CD
         set(OQS_USE_OPENSSL OFF CACHE BOOL "Use OpenSSL" FORCE)
         set(OQS_BUILD_ONLY_LIB ON CACHE BOOL "Build only library" FORCE)
         set(OQS_DIST_BUILD OFF CACHE BOOL "Distribution build" FORCE)
         set(OQS_ENABLE_TEST_CONSTANT_TIME OFF CACHE BOOL "Disable constant time tests" FORCE)
+
+        # CRITICAL: Disable all algorithms except ML-KEM to reduce build time/memory
+        set(OQS_ENABLE_KEM_BIKE OFF CACHE BOOL "" FORCE)
+        set(OQS_ENABLE_KEM_FRODOKEM OFF CACHE BOOL "" FORCE)
+        set(OQS_ENABLE_KEM_NTRUPRIME OFF CACHE BOOL "" FORCE)
+        set(OQS_ENABLE_KEM_CLASSIC_MCELIECE OFF CACHE BOOL "" FORCE)
+        set(OQS_ENABLE_KEM_HQC OFF CACHE BOOL "" FORCE)
+        set(OQS_ENABLE_KEM_KYBER OFF CACHE BOOL "" FORCE)  # Old Kyber
+        set(OQS_ENABLE_KEM_ML_KEM ON CACHE BOOL "" FORCE)  # Only ML-KEM (FIPS 203)
+
+        # Disable all signature algorithms to save build resources
+        set(OQS_ENABLE_SIG_DILITHIUM OFF CACHE BOOL "" FORCE)
+        set(OQS_ENABLE_SIG_FALCON OFF CACHE BOOL "" FORCE)
+        set(OQS_ENABLE_SIG_SPHINCS OFF CACHE BOOL "" FORCE)
+        set(OQS_ENABLE_SIG_MAYO OFF CACHE BOOL "" FORCE)
+        set(OQS_ENABLE_SIG_CROSS OFF CACHE BOOL "" FORCE)
+        set(OQS_ENABLE_SIG_ML_DSA OFF CACHE BOOL "" FORCE)
+
+        # Disable AVX2 optimizations to reduce build time
+        set(OQS_ENABLE_AVX2_INSTRUCTIONS OFF CACHE BOOL "" FORCE)
+        set(OQS_PORTABLE_BUILD ON CACHE BOOL "" FORCE)
 
         # Fetch and build liboqs
         FetchContent_MakeAvailable(liboqs)
