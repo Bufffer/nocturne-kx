@@ -1429,8 +1429,19 @@ public:
         while (std::getline(iss,line)) {
             auto pos = line.find(':'); if (pos==std::string::npos) continue;
             std::string k = line.substr(0,pos);
-            uint64_t v = std::stoull(line.substr(pos+1));
-            m[k]=v;
+            std::string val_str = line.substr(pos+1);
+
+            // Skip empty values
+            if (val_str.empty()) continue;
+
+            try {
+                uint64_t v = std::stoull(val_str);
+                m[k]=v;
+            } catch (const std::exception& e) {
+                // Skip malformed entries
+                std::cerr << "Warning: skipping malformed replay DB entry: " << line << std::endl;
+                continue;
+            }
         }
         version = file_version;
     }

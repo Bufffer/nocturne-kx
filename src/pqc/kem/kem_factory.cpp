@@ -3,6 +3,7 @@
  * @brief KEM factory implementation
  */
 
+#include "kem_factory.hpp"
 #include "kem_interface.hpp"
 
 #ifdef NOCTURNE_ENABLE_PQC
@@ -115,7 +116,7 @@ public:
 };
 
 /**
- * @brief Create KEM instance of specified type
+ * @brief Create KEM instance of specified type (legacy function)
  */
 std::unique_ptr<KEMInterface> create_kem(KEMType type) {
     switch (type) {
@@ -137,6 +138,68 @@ std::unique_ptr<KEMInterface> create_kem(KEMType type) {
 
         default:
             throw std::invalid_argument("Unknown KEM type");
+    }
+}
+
+// ============================================================================
+// KEMFactory Implementation
+// ============================================================================
+
+std::unique_ptr<KEMInterface> KEMFactory::create(KEMType type) {
+    switch (type) {
+        case KEMType::CLASSIC_X25519:
+            return std::make_unique<ClassicX25519KEM>();
+
+#ifdef NOCTURNE_ENABLE_PQC
+        case KEMType::PURE_MLKEM1024:
+            return std::make_unique<MLKEMWrapper>();
+
+        case KEMType::HYBRID_X25519_MLKEM1024:
+            return std::make_unique<HybridKEM>();
+#else
+        case KEMType::PURE_MLKEM1024:
+        case KEMType::HYBRID_X25519_MLKEM1024:
+            throw std::runtime_error(
+                "PQC support not enabled. Recompile with ENABLE_PQC=ON");
+#endif
+
+        default:
+            throw std::invalid_argument("Unknown KEM type");
+    }
+}
+
+bool KEMFactory::is_available(KEMType type) {
+    switch (type) {
+#ifdef NOCTURNE_ENABLE_PQC
+        case KEMType::PURE_MLKEM1024:
+        case KEMType::HYBRID_X25519_MLKEM1024:
+            return true;
+#else
+        case KEMType::PURE_MLKEM1024:
+        case KEMType::HYBRID_X25519_MLKEM1024:
+            return false;
+#endif
+        case KEMType::CLASSIC_X25519:
+            return true; // Always available (fallback)
+
+        default:
+            return false;
+    }
+}
+
+std::string KEMFactory::get_description(KEMType type) {
+    switch (type) {
+        case KEMType::CLASSIC_X25519:
+            return "Classical X25519 ECDH (not quantum-safe)";
+
+        case KEMType::HYBRID_X25519_MLKEM1024:
+            return "Hybrid: X25519 + ML-KEM-1024 (NIST FIPS 203, quantum-safe)";
+
+        case KEMType::PURE_MLKEM1024:
+            return "Pure ML-KEM-1024 (NIST FIPS 203, quantum-safe)";
+
+        default:
+            return "Unknown KEM type";
     }
 }
 
