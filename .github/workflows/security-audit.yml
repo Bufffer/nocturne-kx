@@ -252,8 +252,9 @@ jobs:
           libsodium-dev \
           pkg-config \
           cmake \
-          gcc-13 \
-          g++-13 \
+          clang-15 \
+          libc++-15-dev \
+          libc++abi-15-dev \
           ninja-build
 
     - name: Build fuzzer
@@ -261,13 +262,15 @@ jobs:
         mkdir -p build-fuzz
         cd build-fuzz
 
-        export CC=gcc-13
-        export CXX=g++-13
+        export CC=clang-15
+        export CXX=clang++-15
 
         cmake .. \
           -DCMAKE_BUILD_TYPE=Debug \
           -DBUILD_FUZZER=ON \
           -DENABLE_PQC=ON \
+          -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+          -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -lc++abi" \
           -G Ninja
 
         ninja -j2
