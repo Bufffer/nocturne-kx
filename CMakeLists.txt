@@ -177,9 +177,12 @@ if(BUILD_TESTS)
     find_package(Catch2 3 QUIET)
     if(Catch2_FOUND)
         # Test executable
-        add_executable(nocturne-tests tests/test_main.cpp)
+        add_executable(nocturne-tests tests/test_main.cpp src/core/side_channel.cpp)
         target_link_libraries(nocturne-tests PRIVATE Catch2::Catch2 ${SODIUM_LIBRARIES})
-        target_include_directories(nocturne-tests PRIVATE ${SODIUM_INCLUDE_DIRS})
+        target_include_directories(nocturne-tests PRIVATE
+            ${SODIUM_INCLUDE_DIRS}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
 
         # Register tests
         include(CTest)
@@ -212,11 +215,16 @@ endif()
 # FUZZING
 # ============================================================================
 if(BUILD_FUZZER)
-    set(CMAKE_CXX_COMPILER_WORKS TRUE)
-
-    add_executable(nocturne-fuzzer tests/fuzzer_main.cpp)
+    add_executable(nocturne-fuzzer tests/fuzzer_main.cpp src/core/side_channel.cpp)
+    target_include_directories(nocturne-fuzzer PRIVATE
+        ${SODIUM_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
     target_link_libraries(nocturne-fuzzer ${SODIUM_LIBRARIES})
-    target_include_directories(nocturne-fuzzer PRIVATE ${SODIUM_INCLUDE_DIRS})
+
+    # Add fuzzer-specific flags only to the fuzzer target
+    target_compile_options(nocturne-fuzzer PRIVATE -fsanitize=fuzzer)
+    target_link_options(nocturne-fuzzer PRIVATE -fsanitize=fuzzer)
 endif()
 
 # ============================================================================
