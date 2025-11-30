@@ -41,6 +41,7 @@
 #include "src/double_ratchet.hpp"
 #include "src/handshake.hpp"
 #include "src/transport.hpp"
+#include "src/core/side_channel.hpp"
 #include <iomanip>
 
 // Platform-specific headers for memory protection
@@ -132,113 +133,6 @@ constexpr size_t MAX_ALLOCATION_SIZE = 100 * 1024 * 1024; // 100MB maximum alloc
 
  The code compiles with C++23 and libsodium. See README and CI for build/test instructions.
 */
-
-// Side-channel protection utilities (global namespace for accessibility)
-namespace side_channel_protection {
-    
-    // Constant-time comparison to prevent timing attacks
-    inline bool constant_time_compare(const uint8_t* a, const uint8_t* b, size_t len) {
-        // Prefer libsodium's hardened memcmp if available
-        return sodium_memcmp(a, b, len) == 0;
-    }
-    
-    // Constant-time memory zeroing
-    inline void secure_zero_memory(void* ptr, size_t len) {
-        sodium_memzero(ptr, len);
-    }
-
-    // Constant-time utilities
-    inline uint32_t ct_mask(bool condition) {
-        // All-ones mask if true, 0 if false (branchless)
-        return static_cast<uint32_t>(0) - static_cast<uint32_t>(condition);
-    }
-
-    inline uint32_t ct_select_u32(uint32_t a, uint32_t b, bool pick_b) {
-        uint32_t m = ct_mask(pick_b);
-        return (a & ~m) | (b & m);
-    }
-    
-    // Random delay to prevent timing attacks
-    inline void random_delay() {
-        const char* env = std::getenv("NOCTURNE_DISABLE_RANDOM_DELAY");
-        if (env && *env) return;
-        #if defined(__has_include) && __has_include(<thread>)
-            static thread_local std::mt19937 rng(std::random_device{}());
-            static thread_local std::uniform_int_distribution<int> dist(1, 50);
-            std::this_thread::sleep_for(std::chrono::microseconds(dist(rng)));
-        #else
-            static std::mt19937 rng(std::random_device{}());
-            static std::uniform_int_distribution<int> dist(50, 200);
-            volatile int dummy = 0;
-            for (int i = 0; i < dist(rng); ++i) {
-                dummy += i;
-            }
-            (void)dummy;
-        #endif
-    }
-    
-    // Cache line flush to prevent cache attacks
-    inline void flush_cache_line(const void* ptr) {
-        #if defined(__x86_64__) || defined(__i386__)
-            _mm_clflush(ptr);
-        #elif defined(__aarch64__)
-            // ARM64 cache flush - use portable approach if intrinsic not available
-            #ifdef __has_builtin
-                #if __has_builtin(__builtin_arm_dc_cvau)
-                    __builtin_arm_dc_cvau(ptr);
-                #else
-                    // Portable fallback: memory barrier
-                    std::atomic_thread_fence(std::memory_order_seq_cst);
-                #endif
-            #else
-                // Portable fallback: memory barrier
-                std::atomic_thread_fence(std::memory_order_seq_cst);
-            #endif
-        #else
-            // Portable fallback for other architectures
-            std::atomic_thread_fence(std::memory_order_seq_cst);
-        #endif
-    }
-    
-    // Memory barrier to prevent reordering attacks
-    inline void memory_barrier() {
-        std::atomic_thread_fence(std::memory_order_seq_cst);
-    }
-    
-    // Constant-time conditional copy
-    inline void constant_time_conditional_copy(uint8_t* dst, const uint8_t* src, size_t len, bool condition) {
-        uint8_t mask = condition ? 0xFF : 0x00;
-        for (size_t i = 0; i < len; i++) {
-            dst[i] = (dst[i] & ~mask) | (src[i] & mask);
-        }
-    }
-    
-    // Secure random number generation with side-channel protection
-    inline void secure_random_fill(uint8_t* buffer, size_t len) {
-        randombytes_buf(buffer, len);
-        // Add random delay to prevent power analysis
-        random_delay();
-        // Flush cache to prevent cache attacks
-        flush_cache_line(buffer);
-    }
-    
-    // Constant-time string comparison
-    inline bool constant_time_string_compare(const std::string& a, const std::string& b) {
-        if (a.size() != b.size()) {
-            // Still do comparison to prevent timing leaks
-            return constant_time_compare(
-                reinterpret_cast<const uint8_t*>(a.data()), 
-                reinterpret_cast<const uint8_t*>(b.data()), 
-                std::min(a.size(), b.size())
-            ) && false;
-        }
-        return constant_time_compare(
-            reinterpret_cast<const uint8_t*>(a.data()), 
-            reinterpret_cast<const uint8_t*>(b.data()), 
-            a.size()
-        );
-    }
-}
 
 // Rate limiting utilities for DoS and brute force protection
 namespace rate_limiting {
@@ -1109,9 +1003,9 @@ inline X25519KeyPair gen_x25519() {
     crypto_kx_keypair(secure_pk.get(), secure_sk.get());
     
     // Side-channel protection: flush cache and add random delay
-    side_channel_protection::flush_cache_line(secure_sk.get());
-    side_channel_protection::random_delay();
-    side_channel_protection::memory_barrier();
+    nocturne::side_channel::flush_cache_line(secure_sk.get());
+    nocturne::side_channel::random_delay();
+    nocturne::side_channel::memory_barrier();
     
     // Copy to return value (will be zeroed by SecureMemory destructor)
     X25519KeyPair kp;
@@ -1131,9 +1025,9 @@ inline Ed25519KeyPair gen_ed25519() {
     }
 
     // Side-channel protection
-    side_channel_protection::flush_cache_line(secure_sk.get());
-    side_channel_protection::random_delay();
-    side_channel_protection::memory_barrier();
+    nocturne::side_channel::flush_cache_line(secure_sk.get());
+    nocturne::side_channel::random_delay();
+    nocturne::side_channel::memory_barrier();
 
     Ed25519KeyPair kp;
     std::memcpy(kp.pk.data(), secure_pk.get(), crypto_sign_PUBLICKEYBYTES);
@@ -1299,16 +1193,16 @@ derive_tx_key_client(const std::array<uint8_t,crypto_kx_PUBLICKEYBYTES>& pk_eph,
         throw std::runtime_error("kx client session failed");
     
     // Side-channel protection: flush cache and add random delay
-    side_channel_protection::flush_cache_line(sk_eph.data());
-    side_channel_protection::random_delay();
+    nocturne::side_channel::flush_cache_line(sk_eph.data());
+    nocturne::side_channel::random_delay();
     
     auto k = derive_aead_key_from_session(tx.data(), tx.size(), "nocturne-tx-v3");
     
     // Secure memory zeroing with side-channel protection
-    side_channel_protection::secure_zero_memory(rx.data(), rx.size());
-    side_channel_protection::secure_zero_memory(tx.data(), tx.size());
-    side_channel_protection::flush_cache_line(rx.data());
-    side_channel_protection::flush_cache_line(tx.data());
+    nocturne::side_channel::secure_zero_memory(rx.data(), rx.size());
+    nocturne::side_channel::secure_zero_memory(tx.data(), tx.size());
+    nocturne::side_channel::flush_cache_line(rx.data());
+    nocturne::side_channel::flush_cache_line(tx.data());
     
     return k;
 }
@@ -1324,17 +1218,17 @@ derive_rx_key_server(const std::array<uint8_t,crypto_kx_PUBLICKEYBYTES>& pk_send
         throw std::runtime_error("kx server session failed");
     
     // Side-channel protection: flush cache and add random delay
-    side_channel_protection::flush_cache_line(sk_receiver.data());
-    side_channel_protection::random_delay();
+    nocturne::side_channel::flush_cache_line(sk_receiver.data());
+    nocturne::side_channel::random_delay();
     
     // Use the same context string as encryption side to ensure key equality
     auto k = derive_aead_key_from_session(rx.data(), rx.size(), "nocturne-tx-v3");
     
     // Secure memory zeroing with side-channel protection
-    side_channel_protection::secure_zero_memory(rx.data(), rx.size());
-    side_channel_protection::secure_zero_memory(tx.data(), tx.size());
-    side_channel_protection::flush_cache_line(rx.data());
-    side_channel_protection::flush_cache_line(tx.data());
+    nocturne::side_channel::secure_zero_memory(rx.data(), rx.size());
+    nocturne::side_channel::secure_zero_memory(tx.data(), tx.size());
+    nocturne::side_channel::flush_cache_line(rx.data());
+    nocturne::side_channel::flush_cache_line(tx.data());
     
     return k;
 }
@@ -1351,8 +1245,8 @@ ratchet_mix(const std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTE
         throw std::runtime_error("ratchet kdf failed");
     
     // Side-channel protection: secure memory zeroing
-    side_channel_protection::secure_zero_memory(seed.data(), seed.size());
-    side_channel_protection::flush_cache_line(seed.data());
+    nocturne::side_channel::secure_zero_memory(seed.data(), seed.size());
+    nocturne::side_channel::flush_cache_line(seed.data());
     
     return newk;
 }
@@ -1411,8 +1305,8 @@ inline bool ed25519_verify(const Bytes& msg,
     int result = crypto_sign_verify_detached(sig.data(), msg.data(), msg.size(), pk.data());
     
     // Add random delay to prevent timing attacks
-    side_channel_protection::random_delay();
-    side_channel_protection::memory_barrier();
+    nocturne::side_channel::random_delay();
+    nocturne::side_channel::memory_barrier();
     
     return result == 0;
 }
@@ -1501,8 +1395,8 @@ public:
             const uint8_t* mac_ptr = p;
             std::array<uint8_t, crypto_generichash_BYTES> mac{};
             if (crypto_generichash(mac.data(), mac.size(), raw.data(), 8 + 4 + json_len, mac_key.data(), mac_key.size()) != 0) throw std::runtime_error("mac calc failed");
-            if (!side_channel_protection::constant_time_compare(mac.data(), mac_ptr, mac.size())) {
-                side_channel_protection::random_delay();
+            if (!nocturne::side_channel::constant_time_compare(mac.data(), mac_ptr, mac.size())) {
+                nocturne::side_channel::random_delay();
                 throw std::runtime_error("replaydb MAC mismatch");
             }
             json_s.assign(reinterpret_cast<const char*>(json_ptr), json_len);
@@ -1730,7 +1624,7 @@ public:
         std::array<uint8_t, crypto_sign_BYTES> sig = nocturne::ed25519_sign(msg, temp_sk);
 
         // Zero the temporary array
-        side_channel_protection::secure_zero_memory(temp_sk.data(), temp_sk.size());
+        nocturne::side_channel::secure_zero_memory(temp_sk.data(), temp_sk.size());
 
         return sig;
     }
@@ -1896,10 +1790,10 @@ nocturne::Bytes encrypt_packet(
         if (crypto_scalarmult(dh_shared.data(), ratk.sk.data(), receiver_x25519_pk.data()) != 0) throw std::runtime_error("dh failed");
         auto mixed = ratchet_mix(key, dh_shared.data(), dh_shared.size());
         // Side-channel protection: secure memory zeroing
-        side_channel_protection::secure_zero_memory(key.data(), key.size());
-        side_channel_protection::secure_zero_memory(ratk.sk.data(), ratk.sk.size());
-        side_channel_protection::flush_cache_line(key.data());
-        side_channel_protection::flush_cache_line(ratk.sk.data());
+        nocturne::side_channel::secure_zero_memory(key.data(), key.size());
+        nocturne::side_channel::secure_zero_memory(ratk.sk.data(), ratk.sk.size());
+        nocturne::side_channel::flush_cache_line(key.data());
+        nocturne::side_channel::flush_cache_line(ratk.sk.data());
         key = mixed;
     }
 
@@ -1934,11 +1828,11 @@ nocturne::Bytes encrypt_packet(
     auto out = serialize(p);
 
     // Side-channel protection: secure memory zeroing
-    side_channel_protection::secure_zero_memory(eph.sk.data(), eph.sk.size());
-    side_channel_protection::secure_zero_memory(key.data(), key.size());
-    side_channel_protection::flush_cache_line(eph.sk.data());
-    side_channel_protection::flush_cache_line(key.data());
-    side_channel_protection::memory_barrier();
+    nocturne::side_channel::secure_zero_memory(eph.sk.data(), eph.sk.size());
+    nocturne::side_channel::secure_zero_memory(key.data(), key.size());
+    nocturne::side_channel::flush_cache_line(eph.sk.data());
+    nocturne::side_channel::flush_cache_line(key.data());
+    nocturne::side_channel::memory_barrier();
     
     return out;
 }
@@ -2026,17 +1920,17 @@ nocturne::Bytes decrypt_packet(
         if (crypto_scalarmult(dh_shared.data(), receiver_x25519_sk.data(), p.ratchet_pk->data()) != 0) throw std::runtime_error("dh failed");
         auto mixed = ratchet_mix(key, dh_shared.data(), dh_shared.size());
         // Side-channel protection: secure memory zeroing
-        side_channel_protection::secure_zero_memory(key.data(), key.size());
-        side_channel_protection::flush_cache_line(key.data());
+        nocturne::side_channel::secure_zero_memory(key.data(), key.size());
+        nocturne::side_channel::flush_cache_line(key.data());
         key = mixed;
     }
 
     auto pt = aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext);
 
     // Enhanced security: zero all sensitive data with side-channel protection
-    side_channel_protection::secure_zero_memory(key.data(), key.size());
-    side_channel_protection::flush_cache_line(key.data());
-    side_channel_protection::memory_barrier();
+    nocturne::side_channel::secure_zero_memory(key.data(), key.size());
+    nocturne::side_channel::flush_cache_line(key.data());
+    nocturne::side_channel::memory_barrier();
     
     // Validate decrypted plaintext (basic sanity check)
     if (pt.size() > 1024 * 1024) { // 1MB limit
