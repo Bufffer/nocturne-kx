@@ -2,6 +2,7 @@
 #define NOCTURNE_HSM_PKCS11_HSM_HPP
 
 #include "hsm_interface.hpp"
+#include "hsm_errors.hpp"
 #include "../core/side_channel.hpp"
 #include <mutex>
 #include <unordered_map>

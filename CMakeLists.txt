@@ -195,6 +195,56 @@ if(BUILD_TESTS)
         message(WARNING "Catch2 not found, tests will be disabled")
     endif()
 
+    # Additional comprehensive test suites
+    if(Catch2_FOUND)
+        # HSM comprehensive tests
+        add_executable(hsm-comprehensive-test
+            tests/hsm/test_hsm_comprehensive.cpp
+            src/core/side_channel.cpp
+        )
+        target_link_libraries(hsm-comprehensive-test PRIVATE
+            Catch2::Catch2
+            ${SODIUM_LIBRARIES}
+        )
+        target_include_directories(hsm-comprehensive-test PRIVATE
+            ${SODIUM_INCLUDE_DIRS}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        add_test(NAME hsm-comprehensive-test COMMAND hsm-comprehensive-test)
+
+        # Side-channel protection tests
+        add_executable(side-channel-test
+            tests/core/test_side_channel.cpp
+            src/core/side_channel.cpp
+        )
+        target_link_libraries(side-channel-test PRIVATE
+            Catch2::Catch2
+            ${SODIUM_LIBRARIES}
+        )
+        target_include_directories(side-channel-test PRIVATE
+            ${SODIUM_INCLUDE_DIRS}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        add_test(NAME side-channel-test COMMAND side-channel-test)
+
+        # Protocol integration tests
+        add_executable(protocol-integration-test
+            tests/protocol/test_integration.cpp
+            src/core/side_channel.cpp
+        )
+        target_link_libraries(protocol-integration-test PRIVATE
+            Catch2::Catch2
+            ${SODIUM_LIBRARIES}
+        )
+        target_include_directories(protocol-integration-test PRIVATE
+            ${SODIUM_INCLUDE_DIRS}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        add_test(NAME protocol-integration-test COMMAND protocol-integration-test)
+
+        message(STATUS "Comprehensive test suites enabled")
+    endif()
+
     # PQC-specific tests
     if(ENABLE_PQC)
         add_executable(pqc-basic-test tests/pqc/test_liboqs_basic.cpp)
@@ -206,6 +256,33 @@ if(BUILD_TESTS)
         endif()
 
         add_test(NAME pqc-basic-test COMMAND pqc-basic-test)
+
+        # PQC comprehensive tests with Catch2
+        if(Catch2_FOUND)
+            add_executable(pqc-comprehensive-test
+                tests/pqc/test_pqc_vectors.cpp
+                src/core/side_channel.cpp
+                src/pqc/kem/kem_interface.cpp
+                src/pqc/kem/kem_factory.cpp
+            )
+            target_link_libraries(pqc-comprehensive-test PRIVATE
+                Catch2::Catch2
+                ${SODIUM_LIBRARIES}
+                ${LIBOQS_LIBRARY}
+            )
+            target_include_directories(pqc-comprehensive-test PRIVATE
+                ${SODIUM_INCLUDE_DIRS}
+                ${LIBOQS_INCLUDE_DIR}
+                ${CMAKE_CURRENT_SOURCE_DIR}/src
+            )
+
+            if(WIN32)
+                target_link_libraries(pqc-comprehensive-test bcrypt)
+            endif()
+
+            add_test(NAME pqc-comprehensive-test COMMAND pqc-comprehensive-test)
+            message(STATUS "PQC comprehensive tests enabled")
+        endif()
 
         message(STATUS "PQC tests enabled")
     endif()
