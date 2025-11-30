@@ -35,15 +35,16 @@ jobs:
         mkdir -p build
         cd build
 
-        # Use ccache and limit parallel jobs to prevent OOM
-        export CC="ccache gcc"
-        export CXX="ccache g++"
+        # Configure ccache for C/C++ only (not assembly)
         export CCACHE_DIR=$HOME/.ccache
+        export CCACHE_COMPILERCHECK=content
 
         cmake .. \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_C_COMPILER_LAUNCHER=ccache \
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_ASM_COMPILER_LAUNCHER="" \
+          -DOQS_DIST_BUILD=ON \
           -G Ninja
 
         echo "✅ Configuration successful"
