@@ -29,7 +29,8 @@ jobs:
           pkg-config \
           cmake \
           build-essential \
-          clang-15 \
+          gcc-13 \
+          g++-13 \
           ninja-build
 
     - name: Configure with sanitizers
@@ -37,8 +38,8 @@ jobs:
         mkdir -p build-asan
         cd build-asan
 
-        export CC=clang-15
-        export CXX=clang++-15
+        export CC=gcc-13
+        export CXX=g++-13
 
         cmake .. \
           -DCMAKE_BUILD_TYPE=Debug \
@@ -183,8 +184,8 @@ jobs:
       run: |
         echo "=== SCANNING FOR WEAK CRYPTO PATTERNS ==="
 
-        # Check for deprecated/weak algorithms
-        if grep -r -n -E "(MD5|SHA1|DES|RC4|ECB)" src/ nocturne-kx.cpp; then
+        # Check for deprecated/weak algorithms (word boundaries to avoid false positives)
+        if grep -r -n -E "\b(MD5|SHA1|DES|RC4|ECB)\b" src/ nocturne-kx.cpp; then
           echo "⚠️  WARNING: Weak crypto algorithms detected"
           exit 1
         else
@@ -251,7 +252,8 @@ jobs:
           libsodium-dev \
           pkg-config \
           cmake \
-          clang-15 \
+          gcc-13 \
+          g++-13 \
           ninja-build
 
     - name: Build fuzzer
@@ -259,8 +261,8 @@ jobs:
         mkdir -p build-fuzz
         cd build-fuzz
 
-        export CC=clang-15
-        export CXX=clang++-15
+        export CC=gcc-13
+        export CXX=g++-13
 
         cmake .. \
           -DCMAKE_BUILD_TYPE=Debug \
