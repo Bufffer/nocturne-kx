@@ -19,17 +19,46 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential git ninja-build
+        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential git ninja-build ccache
 
-    - name: Build project
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ${{ github.job }}-${{ runner.os }}
+        max-size: 500M
+
+    - name: Configure build with optimizations
+      run: |
+        echo "========================================="
+        echo "Configuring Nocturne-KX build..."
+        echo "========================================="
+        mkdir -p build
+        cd build
+
+        # Use ccache and limit parallel jobs to prevent OOM
+        export CC="ccache gcc"
+        export CXX="ccache g++"
+        export CCACHE_DIR=$HOME/.ccache
+
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -G Ninja
+
+        echo "✅ Configuration successful"
+
+    - name: Build project (rate-limited)
       run: |
         echo "========================================="
         echo "Building Nocturne-KX..."
         echo "========================================="
-        mkdir -p build
         cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release
-        cmake --build . -j
+
+        # Limit parallel jobs to 2 to prevent memory exhaustion
+        # GitHub Actions runners have 7GB RAM, liboqs is memory-intensive
+        ninja -j2
+
         echo "✅ Build successful"
         ls -lh nocturne-kx || ls -lh */nocturne-kx || echo "Binary location check"
 
