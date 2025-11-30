@@ -29,6 +29,7 @@
 #include <sodium.h>
 #include <array>
 #include <cstring>
+#include <iostream>
 
 namespace nocturne {
 namespace pqc {
@@ -107,12 +108,12 @@ private:
                 input.data(), input.size(),
                 reinterpret_cast<const uint8_t*>(domain), std::strlen(domain)) != 0) {
             // Secure cleanup before throwing
-            side_channel_protection::secure_zero_memory(input.data(), input.size());
+            side_channel::secure_zero_memory(input.data(), input.size());
             throw std::runtime_error("Hybrid KDF (BLAKE2b) failed");
         }
 
         // Secure cleanup of intermediate values
-        side_channel_protection::secure_zero_memory(input.data(), input.size());
+        side_channel::secure_zero_memory(input.data(), input.size());
 
         if (Config::instance().verbose_logging) {
             std::cerr << "[PQC] Hybrid KDF: combined " << x25519_secret.size()
@@ -172,8 +173,8 @@ public:
                                     mlkem_kp.secret_key.end());
 
         // Secure cleanup of temporary keys
-        side_channel_protection::secure_zero_memory(x25519_sk.data(), x25519_sk.size());
-        side_channel_protection::secure_zero_memory(
+        side_channel::secure_zero_memory(x25519_sk.data(), x25519_sk.size());
+        side_channel::secure_zero_memory(
             mlkem_kp.secret_key.data(), mlkem_kp.secret_key.size());
 
         if (Config::instance().verbose_logging) {
@@ -224,8 +225,8 @@ public:
         if (crypto_scalarmult(x25519_shared.data(),
                              x25519_eph_sk.data(),
                              x25519_peer_pk.data()) != 0) {
-            side_channel_protection::secure_zero_memory(x25519_eph_sk.data(), X25519_SK_SIZE);
-            side_channel_protection::secure_zero_memory(x25519_shared.data(), 32);
+            side_channel::secure_zero_memory(x25519_eph_sk.data(), X25519_SK_SIZE);
+            side_channel::secure_zero_memory(x25519_shared.data(), 32);
             throw std::runtime_error("X25519 key exchange failed (invalid public key?)");
         }
 
@@ -260,10 +261,10 @@ public:
         std::memcpy(hybrid_ss.secret.data(), combined_secret.data(), 32);
 
         // Secure cleanup
-        side_channel_protection::secure_zero_memory(x25519_eph_sk.data(), X25519_SK_SIZE);
-        side_channel_protection::secure_zero_memory(x25519_shared.data(), 32);
-        side_channel_protection::secure_zero_memory(mlkem_ss.secret.data(), 32);
-        side_channel_protection::secure_zero_memory(combined_secret.data(), 32);
+        side_channel::secure_zero_memory(x25519_eph_sk.data(), X25519_SK_SIZE);
+        side_channel::secure_zero_memory(x25519_shared.data(), 32);
+        side_channel::secure_zero_memory(mlkem_ss.secret.data(), 32);
+        side_channel::secure_zero_memory(combined_secret.data(), 32);
 
         if (Config::instance().verbose_logging) {
             std::cerr << "[PQC] Hybrid encaps: ct=" << hybrid_ct.ciphertext.size()
@@ -341,8 +342,8 @@ public:
         if (crypto_scalarmult(x25519_shared.data(),
                              x25519_sk.data(),
                              x25519_eph_pk.data()) != 0) {
-            side_channel_protection::secure_zero_memory(x25519_sk.data(), X25519_SK_SIZE);
-            side_channel_protection::secure_zero_memory(x25519_shared.data(), 32);
+            side_channel::secure_zero_memory(x25519_sk.data(), X25519_SK_SIZE);
+            side_channel::secure_zero_memory(x25519_shared.data(), 32);
             throw std::runtime_error("X25519 key exchange failed (invalid ephemeral key?)");
         }
 
@@ -359,11 +360,11 @@ public:
         std::memcpy(hybrid_ss.secret.data(), combined_secret.data(), 32);
 
         // Secure cleanup
-        side_channel_protection::secure_zero_memory(x25519_sk.data(), X25519_SK_SIZE);
-        side_channel_protection::secure_zero_memory(x25519_shared.data(), 32);
-        side_channel_protection::secure_zero_memory(mlkem_ss.secret.data(), 32);
-        side_channel_protection::secure_zero_memory(mlkem_sk.data(), mlkem_sk.size());
-        side_channel_protection::secure_zero_memory(combined_secret.data(), 32);
+        side_channel::secure_zero_memory(x25519_sk.data(), X25519_SK_SIZE);
+        side_channel::secure_zero_memory(x25519_shared.data(), 32);
+        side_channel::secure_zero_memory(mlkem_ss.secret.data(), 32);
+        side_channel::secure_zero_memory(mlkem_sk.data(), mlkem_sk.size());
+        side_channel::secure_zero_memory(combined_secret.data(), 32);
 
         if (Config::instance().verbose_logging) {
             std::cerr << "[PQC] Hybrid decaps: ss=32B" << std::endl;

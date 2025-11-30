@@ -33,6 +33,7 @@
 #include <sodium.h>
 #include <memory>
 #include <stdexcept>
+#include <iostream>
 
 namespace nocturne {
 namespace pqc {
@@ -119,7 +120,7 @@ public:
 
         // Side-channel protection: random delay
         if (Config::instance().side_channel_protection) {
-            side_channel_protection::random_delay();
+            side_channel::random_delay();
         }
 
         // Generate keypair via liboqs
@@ -131,15 +132,15 @@ public:
 
         if (status != OQS_SUCCESS) {
             // Secure cleanup on error
-            side_channel_protection::secure_zero_memory(
+            side_channel::secure_zero_memory(
                 kp.secret_key.data(), kp.secret_key.size());
             throw std::runtime_error("ML-KEM-1024 keypair generation failed (OQS_KEM_keypair)");
         }
 
         // Side-channel protection: flush cache
         if (Config::instance().side_channel_protection) {
-            side_channel_protection::flush_cache_line(kp.secret_key.data());
-            side_channel_protection::memory_barrier();
+            side_channel::flush_cache_line(kp.secret_key.data());
+            side_channel::memory_barrier();
         }
 
         // Verbose logging
@@ -185,7 +186,7 @@ public:
 
         // Side-channel protection: random delay
         if (Config::instance().side_channel_protection) {
-            side_channel_protection::random_delay();
+            side_channel::random_delay();
         }
 
         // Encapsulation via liboqs
@@ -198,15 +199,15 @@ public:
 
         if (status != OQS_SUCCESS) {
             // Secure cleanup
-            side_channel_protection::secure_zero_memory(
+            side_channel::secure_zero_memory(
                 ss.secret.data(), ss.secret.size());
             throw std::runtime_error("ML-KEM-1024 encapsulation failed (OQS_KEM_encaps)");
         }
 
         // Side-channel protection: flush
         if (Config::instance().side_channel_protection) {
-            side_channel_protection::flush_cache_line(ss.secret.data());
-            side_channel_protection::memory_barrier();
+            side_channel::flush_cache_line(ss.secret.data());
+            side_channel::memory_barrier();
         }
 
         if (Config::instance().verbose_logging) {
@@ -260,7 +261,7 @@ public:
 
         // Side-channel protection: random delay
         if (Config::instance().side_channel_protection) {
-            side_channel_protection::random_delay();
+            side_channel::random_delay();
         }
 
         // Decapsulation via liboqs
@@ -273,12 +274,12 @@ public:
 
         if (status != OQS_SUCCESS) {
             // Secure cleanup
-            side_channel_protection::secure_zero_memory(
+            side_channel::secure_zero_memory(
                 ss.secret.data(), ss.secret.size());
 
             // Constant-time error handling (prevent timing oracle)
             if (Config::instance().side_channel_protection) {
-                side_channel_protection::random_delay();
+                side_channel::random_delay();
             }
 
             throw std::runtime_error(
@@ -288,8 +289,8 @@ public:
 
         // Side-channel protection: flush
         if (Config::instance().side_channel_protection) {
-            side_channel_protection::flush_cache_line(ss.secret.data());
-            side_channel_protection::memory_barrier();
+            side_channel::flush_cache_line(ss.secret.data());
+            side_channel::memory_barrier();
         }
 
         if (Config::instance().verbose_logging) {
