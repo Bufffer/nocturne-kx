@@ -269,8 +269,11 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug \
           -DBUILD_FUZZER=ON \
           -DENABLE_PQC=ON \
-          -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
-          -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -lc++abi" \
+          -DCMAKE_C_COMPILER=clang-15 \
+          -DCMAKE_CXX_COMPILER=clang++-15 \
+          -DCMAKE_C_FLAGS="-fsanitize=fuzzer" \
+          -DCMAKE_CXX_FLAGS="-stdlib=libc++ -fsanitize=fuzzer" \
+          -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -lc++abi -fsanitize=fuzzer" \
           -G Ninja
 
         ninja -j2

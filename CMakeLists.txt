@@ -297,11 +297,22 @@ if(BUILD_FUZZER)
         ${SODIUM_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
+
+    # Link libraries
     target_link_libraries(nocturne-fuzzer ${SODIUM_LIBRARIES})
 
-    # Add fuzzer-specific flags only to the fuzzer target
-    target_compile_options(nocturne-fuzzer PRIVATE -fsanitize=fuzzer)
-    target_link_options(nocturne-fuzzer PRIVATE -fsanitize=fuzzer)
+    # Fuzzer must use libc++ when built with Clang
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(nocturne-fuzzer PRIVATE -stdlib=libc++ -fsanitize=fuzzer)
+        target_link_options(nocturne-fuzzer PRIVATE -stdlib=libc++ -lc++abi -fsanitize=fuzzer)
+    else()
+        # GCC doesn't have libFuzzer, use AddressSanitizer instead
+        target_compile_options(nocturne-fuzzer PRIVATE -fsanitize=address,undefined)
+        target_link_options(nocturne-fuzzer PRIVATE -fsanitize=address,undefined)
+        message(WARNING "libFuzzer requires Clang. Using AddressSanitizer with GCC instead.")
+    endif()
+
+    message(STATUS "Fuzzer target configured with compiler: ${CMAKE_CXX_COMPILER_ID}")
 endif()
 
 # ============================================================================
