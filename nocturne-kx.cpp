@@ -44,6 +44,7 @@
 #include "src/core/side_channel.hpp"
 #include "src/hsm/pkcs11_hsm.hpp"
 #include "src/pqc/kem/kem_factory.hpp"
+#include "src/pqc/pqc_config.hpp"
 #include <iomanip>
 
 // Platform-specific headers for memory protection
@@ -2182,7 +2183,14 @@ nocturne::Bytes decrypt_packet_kem(
 
     nocturne::pqc::KEMCiphertext ct;
     ct.type = kem_type;
-    ct.version = static_cast<uint32_t>(p.version);
+    // HybridKEM::combine_secrets binds the derived shared secret to
+    // NOCTURNE_PROTOCOL_VERSION (the PQC protocol version, 4), NOT to the
+    // outer Nocturne packet version (which is still 3 for backward compat).
+    // The sender's encapsulate() uses NOCTURNE_PROTOCOL_VERSION here, so the
+    // receiver must mirror it — otherwise sender and receiver derive
+    // different combined secrets and the AEAD tag fails to authenticate
+    // with "aead decrypt failed (auth)" even though the KEM math is correct.
+    ct.version = static_cast<uint32_t>(NOCTURNE_PROTOCOL_VERSION);
     ct.ciphertext = p.pqc_kem_ct;
     auto kem_ss = kem->decapsulate(ct, receiver_sk);
     auto key = derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4");
