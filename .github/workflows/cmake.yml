@@ -128,17 +128,13 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        # libc++-dev / libc++abi-dev are required because the fuzzer target
-        # is compiled with -stdlib=libc++ (libFuzzer's runtime expects it).
         sudo apt-get install -y \
-          libsodium-dev pkg-config cmake build-essential clang git ninja-build \
-          libc++-dev libc++abi-dev
+          libsodium-dev pkg-config cmake build-essential clang git ninja-build
 
     - name: Configure CMake for fuzzing
       run: |
-        # ENABLE_PQC=OFF: liboqs builds with libstdc++ but the fuzzer uses
-        # libc++ — mixing produces thousands of undefined std:: symbols at
-        # link time. The fuzzer doesn't exercise PQC code anyway.
+        # ENABLE_PQC=OFF: the fuzzer doesn't exercise PQC code, and skipping
+        # liboqs cuts a multi-thousand-file build out of the CI loop.
         # Sanitizer flags are applied at the target level by CMakeLists.txt
         # via target_compile_options, so we don't pass them globally here.
         cmake -B ${{github.workspace}}/build-fuzz \

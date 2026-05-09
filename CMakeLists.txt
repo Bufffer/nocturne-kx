@@ -306,12 +306,16 @@ if(BUILD_FUZZER)
     # Link libraries
     target_link_libraries(nocturne-fuzzer ${SODIUM_LIBRARIES})
 
-    # Fuzzer must use libc++ when built with Clang
+    # Use Clang's default stdlib (libstdc++ on Ubuntu/Debian). libFuzzer's
+    # runtime is shipped pre-built against libstdc++, so forcing -stdlib=libc++
+    # produces undefined references to std::__cxx11::* symbols at link time.
+    # If a future need for libc++ arises, both libFuzzer AND our code must be
+    # rebuilt against it together.
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        target_compile_options(nocturne-fuzzer PRIVATE -stdlib=libc++ -fsanitize=fuzzer)
-        target_link_options(nocturne-fuzzer PRIVATE -stdlib=libc++ -lc++abi -fsanitize=fuzzer)
+        target_compile_options(nocturne-fuzzer PRIVATE -fsanitize=fuzzer)
+        target_link_options(nocturne-fuzzer PRIVATE -fsanitize=fuzzer)
     else()
-        # GCC doesn't have libFuzzer, use AddressSanitizer instead
+        # GCC doesn't ship libFuzzer; fall back to AddressSanitizer.
         target_compile_options(nocturne-fuzzer PRIVATE -fsanitize=address,undefined)
         target_link_options(nocturne-fuzzer PRIVATE -fsanitize=address,undefined)
         message(WARNING "libFuzzer requires Clang. Using AddressSanitizer with GCC instead.")
