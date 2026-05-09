@@ -297,7 +297,18 @@ endif()
 # FUZZING
 # ============================================================================
 if(BUILD_FUZZER)
-    add_executable(nocturne-fuzzer tests/fuzzer_main.cpp src/core/side_channel.cpp)
+    # The fuzzer #includes nocturne-kx.cpp wholesale (NOCTURNE_FUZZER_BUILD
+    # macro guards the main()), so it pulls in the encrypt_packet_kem /
+    # decrypt_packet_kem references to KEMFactory. Those symbols live in
+    # kem_interface.cpp and kem_factory.cpp — link them explicitly here.
+    # The factory's PQC backends are gated by #ifdef NOCTURNE_ENABLE_PQC, so
+    # this stays compatible with the fuzzer's ENABLE_PQC=OFF build.
+    add_executable(nocturne-fuzzer
+        tests/fuzzer_main.cpp
+        src/core/side_channel.cpp
+        src/pqc/kem/kem_interface.cpp
+        src/pqc/kem/kem_factory.cpp
+    )
     target_include_directories(nocturne-fuzzer PRIVATE
         ${SODIUM_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
