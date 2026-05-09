@@ -154,6 +154,11 @@ if(NOT BUILD_FUZZER)
     # Link libraries
     target_link_libraries(nocturne-kx ${SODIUM_LIBRARIES})
 
+    # PKCS#11 HSM backend uses dlopen/dlsym (Linux) or LoadLibrary (Windows).
+    # CMAKE_DL_LIBS resolves to "dl" on Linux/Alpine and "" on Windows
+    # (where kernel32 is auto-linked by MSVC).
+    target_link_libraries(nocturne-kx ${CMAKE_DL_LIBS})
+
     if(ENABLE_PQC)
         target_link_libraries(nocturne-kx ${LIBOQS_LIBRARY})
 

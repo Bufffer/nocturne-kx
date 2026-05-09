@@ -520,7 +520,9 @@ public:
 private:
     std::unordered_map<std::string, std::unique_ptr<DoubleRatchet>> sessions_;
     std::string storage_path_;
-    std::mutex sessions_mutex_;
+    // Mutable so const accessors (has_session, list_sessions, get_session_info)
+    // can take the lock without dropping their const-qualifier.
+    mutable std::mutex sessions_mutex_;
     
     // Persistence helpers
     std::string get_session_file_path(const std::string& session_id) const;

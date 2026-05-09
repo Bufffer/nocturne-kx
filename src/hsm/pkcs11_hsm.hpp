@@ -34,6 +34,14 @@ typedef CK_ULONG CK_FLAGS;
 typedef CK_ULONG CK_MECHANISM_TYPE;
 typedef void* CK_VOID_PTR;
 
+// PKCS#11 boolean constants
+#ifndef CK_TRUE
+#define CK_TRUE  ((CK_BBOOL)1)
+#endif
+#ifndef CK_FALSE
+#define CK_FALSE ((CK_BBOOL)0)
+#endif
+
 // PKCS#11 return values
 #define CKR_OK 0x00000000UL
 #define CKR_CANCEL 0x00000001UL
@@ -184,8 +192,11 @@ private:
     std::atomic<uint64_t> failed_operations_{0};
 
     // Audit trail
+    // Both members are mutable: log_audit() is declared const so it can be
+    // called from const accessors (verify, get_status), and it pushes into
+    // audit_trail_ as a logical side-effect of the const operation.
     mutable std::mutex audit_mutex_;
-    std::deque<AuditRecord> audit_trail_;
+    mutable std::deque<AuditRecord> audit_trail_;
     size_t max_audit_records_ = 10000;
 
     /**
