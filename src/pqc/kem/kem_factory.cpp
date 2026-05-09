@@ -12,6 +12,7 @@
 #endif
 
 #include <sodium.h>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 

@@ -181,9 +181,16 @@ if(BUILD_TESTS)
     # Find Catch2
     find_package(Catch2 3 QUIET)
     if(Catch2_FOUND)
-        # Test executable
-        add_executable(nocturne-tests tests/test_main.cpp src/core/side_channel.cpp)
-        target_link_libraries(nocturne-tests PRIVATE Catch2::Catch2 ${SODIUM_LIBRARIES})
+        # Test executable. Like the fuzzer, test_main.cpp #includes nocturne-kx.cpp
+        # whole, so it inherits the encrypt_packet_kem / decrypt_packet_kem
+        # references to KEMFactory and needs the KEM sources linked in.
+        add_executable(nocturne-tests
+            tests/test_main.cpp
+            src/core/side_channel.cpp
+            src/pqc/kem/kem_interface.cpp
+            src/pqc/kem/kem_factory.cpp
+        )
+        target_link_libraries(nocturne-tests PRIVATE Catch2::Catch2 ${SODIUM_LIBRARIES} ${CMAKE_DL_LIBS})
         target_include_directories(nocturne-tests PRIVATE
             ${SODIUM_INCLUDE_DIRS}
             ${CMAKE_CURRENT_SOURCE_DIR}/src
