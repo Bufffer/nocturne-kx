@@ -2,8 +2,12 @@
 #define NOCTURNE_SECURITY_AUDIT_LOGGER_HPP
 
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -426,6 +430,213 @@ private:
         }
     }
 
+    // ============================================================================
+    // verify_chain helpers — minimal JSON line parser tailored to our own emitter.
+    //
+    // The audit log writer (to_json) escapes string fields via json_escape and
+    // emits everything as a single line. We parse the same shape here without
+    // pulling in a third-party JSON library.
+    // ============================================================================
+
+    struct ParsedAuditLine {
+        uint64_t seq = 0;
+        int64_t  ts_ms = 0;
+        AuditSeverity severity = AuditSeverity::INFO;
+        std::string category, action, subject, object, result, message;
+        std::array<uint8_t, 32> prev_hash{};
+        std::array<uint8_t, 32> current_hash{};
+        bool has_sig = false;
+        std::array<uint8_t, 64> sig{};
+        std::array<uint8_t, 32> signing_key{};
+    };
+
+    static size_t find_json_key(const std::string& s, const std::string& key, size_t start = 0) {
+        std::string pattern = "\"" + key + "\":";
+        return s.find(pattern, start);
+    }
+
+    // Parse a JSON string starting at the given opening quote position.
+    // Inverse of json_escape() — handles \" \\ \/ \b \f \n \r \t and \uXXXX
+    // (control chars only; BMP code points are emitted as UTF-8).
+    static std::optional<std::string> parse_json_string_at(const std::string& s, size_t pos) {
+        if (pos >= s.size() || s[pos] != '"') return std::nullopt;
+        ++pos;
+        std::string out;
+        while (pos < s.size()) {
+            char c = s[pos];
+            if (c == '"') return out;
+            if (c == '\\' && pos + 1 < s.size()) {
+                char esc = s[pos + 1];
+                switch (esc) {
+                    case '"':  out.push_back('"');  pos += 2; break;
+                    case '\\': out.push_back('\\'); pos += 2; break;
+                    case '/':  out.push_back('/');  pos += 2; break;
+                    case 'b':  out.push_back('\b'); pos += 2; break;
+                    case 'f':  out.push_back('\f'); pos += 2; break;
+                    case 'n':  out.push_back('\n'); pos += 2; break;
+                    case 'r':  out.push_back('\r'); pos += 2; break;
+                    case 't':  out.push_back('\t'); pos += 2; break;
+                    case 'u': {
+                        if (pos + 5 >= s.size()) return std::nullopt;
+                        uint32_t cp = 0;
+                        for (int i = 0; i < 4; ++i) {
+                            char hc = s[pos + 2 + i]; cp <<= 4;
+                            if      (hc >= '0' && hc <= '9') cp |= (hc - '0');
+                            else if (hc >= 'a' && hc <= 'f') cp |= (hc - 'a' + 10);
+                            else if (hc >= 'A' && hc <= 'F') cp |= (hc - 'A' + 10);
+                            else return std::nullopt;
+                        }
+                        if (cp <= 0x7F) {
+                            out.push_back(static_cast<char>(cp));
+                        } else if (cp <= 0x7FF) {
+                            out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+                            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                        } else {
+                            out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+                            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                        }
+                        pos += 6;
+                        break;
+                    }
+                    default: return std::nullopt;
+                }
+            } else {
+                out.push_back(c);
+                ++pos;
+            }
+        }
+        return std::nullopt;
+    }
+
+    static std::optional<uint64_t> parse_json_uint_at(const std::string& s, size_t pos) {
+        if (pos >= s.size() || !std::isdigit(static_cast<unsigned char>(s[pos]))) return std::nullopt;
+        uint64_t v = 0;
+        while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos]))) {
+            v = v * 10 + static_cast<uint64_t>(s[pos] - '0');
+            ++pos;
+        }
+        return v;
+    }
+
+    // "YYYY-MM-DDTHH:MM:SS.mmmZ" -> ms since epoch (UTC).
+    static std::optional<int64_t> parse_iso8601_ms(const std::string& s) {
+        if (s.size() < 24 || s.back() != 'Z') return std::nullopt;
+        int Y, M, D, h, m, sec, ms;
+        if (std::sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d.%dZ",
+                        &Y, &M, &D, &h, &m, &sec, &ms) != 7) return std::nullopt;
+        std::tm tm_v{};
+        tm_v.tm_year = Y - 1900;
+        tm_v.tm_mon  = M - 1;
+        tm_v.tm_mday = D;
+        tm_v.tm_hour = h;
+        tm_v.tm_min  = m;
+        tm_v.tm_sec  = sec;
+#ifdef _WIN32
+        std::time_t epoch = _mkgmtime(&tm_v);
+#else
+        std::time_t epoch = timegm(&tm_v);
+#endif
+        if (epoch == static_cast<std::time_t>(-1)) return std::nullopt;
+        return static_cast<int64_t>(epoch) * 1000 + ms;
+    }
+
+    static std::optional<std::vector<uint8_t>> hex_decode_n(const std::string& s, size_t expected) {
+        if (s.size() != expected * 2) return std::nullopt;
+        auto val = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        };
+        std::vector<uint8_t> out(expected);
+        for (size_t i = 0; i < expected; ++i) {
+            int hi = val(s[2*i]), lo = val(s[2*i + 1]);
+            if (hi < 0 || lo < 0) return std::nullopt;
+            out[i] = static_cast<uint8_t>((hi << 4) | lo);
+        }
+        return out;
+    }
+
+    static std::optional<AuditSeverity> string_to_severity(const std::string& s) {
+        if (s == "DEBUG")     return AuditSeverity::DEBUG;
+        if (s == "INFO")      return AuditSeverity::INFO;
+        if (s == "NOTICE")    return AuditSeverity::NOTICE;
+        if (s == "WARNING")   return AuditSeverity::WARNING;
+        if (s == "ERROR")     return AuditSeverity::ERROR;
+        if (s == "CRITICAL")  return AuditSeverity::CRITICAL;
+        if (s == "ALERT")     return AuditSeverity::ALERT;
+        if (s == "EMERGENCY") return AuditSeverity::EMERGENCY;
+        if (s == "SECURITY")  return AuditSeverity::SECURITY;
+        return std::nullopt;
+    }
+
+    bool parse_audit_line(const std::string& line, ParsedAuditLine& p) const {
+        auto extract_string = [&](const std::string& key, std::string& out) -> bool {
+            auto pos = find_json_key(line, key);
+            if (pos == std::string::npos) return false;
+            pos += key.size() + 3; // skip "key":
+            auto v = parse_json_string_at(line, pos);
+            if (!v) return false;
+            out = std::move(*v);
+            return true;
+        };
+        auto extract_uint = [&](const std::string& key, uint64_t& out) -> bool {
+            auto pos = find_json_key(line, key);
+            if (pos == std::string::npos) return false;
+            pos += key.size() + 3;
+            auto v = parse_json_uint_at(line, pos);
+            if (!v) return false;
+            out = *v;
+            return true;
+        };
+
+        if (!extract_uint("seq", p.seq)) return false;
+
+        std::string ts_str;
+        if (!extract_string("ts", ts_str)) return false;
+        auto ts_opt = parse_iso8601_ms(ts_str);
+        if (!ts_opt) return false;
+        p.ts_ms = *ts_opt;
+
+        std::string sev_str;
+        if (!extract_string("sev", sev_str)) return false;
+        auto sev_opt = string_to_severity(sev_str);
+        if (!sev_opt) return false;
+        p.severity = *sev_opt;
+
+        if (!extract_string("cat", p.category)) return false;
+        if (!extract_string("act", p.action))   return false;
+        if (!extract_string("sub", p.subject))  return false;
+        if (!extract_string("obj", p.object))   return false;
+        if (!extract_string("res", p.result))   return false;
+        if (!extract_string("msg", p.message))  return false;
+
+        std::string prev_hex, hash_hex;
+        if (!extract_string("prev", prev_hex)) return false;
+        if (!extract_string("hash", hash_hex)) return false;
+        auto prev = hex_decode_n(prev_hex, 32);
+        auto hash = hex_decode_n(hash_hex, 32);
+        if (!prev || !hash) return false;
+        std::memcpy(p.prev_hash.data(),    prev->data(), 32);
+        std::memcpy(p.current_hash.data(), hash->data(), 32);
+
+        // Optional signature pair.
+        std::string sig_hex, pub_hex;
+        bool got_sig = extract_string("sig", sig_hex);
+        bool got_pub = extract_string("pub", pub_hex);
+        if (got_sig && got_pub) {
+            auto sig = hex_decode_n(sig_hex, 64);
+            auto pub = hex_decode_n(pub_hex, 32);
+            if (sig && pub) {
+                std::memcpy(p.sig.data(),         sig->data(), 64);
+                std::memcpy(p.signing_key.data(), pub->data(), 32);
+                p.has_sig = true;
+            }
+        }
+        return true;
+    }
+
     /**
      * @brief Load chain state from disk
      */
@@ -697,22 +908,133 @@ public:
     }
 
     /**
-     * @brief Verify chain integrity
-     * @return true if chain is valid
+     * @brief Result of a chain verification pass
      */
-    bool verify_chain(std::optional<size_t> start_seq = std::nullopt,
-                     std::optional<size_t> end_seq = std::nullopt) const {
-        // TODO: Implement chain verification by reading log file
-        // For each record:
-        //   1. Recompute hash from canonical bytes
-        //   2. Verify hash matches stored hash
-        //   3. Verify signature if present
-        //   4. Verify previous_hash matches previous record's current_hash
+    struct VerifyChainResult {
+        bool valid = true;                          ///< true iff every checked record passed
+        size_t records_checked = 0;                 ///< total records that passed (or were attempted)
+        size_t records_signed = 0;                  ///< records carrying a signature field
+        size_t records_signed_valid = 0;            ///< records whose signature verified OK
+        std::optional<uint64_t> first_failure_seq;  ///< sequence number of the earliest failure
+        std::vector<std::string> errors;            ///< up to MAX_ERRORS human-readable errors
 
-        (void)start_seq;
-        (void)end_seq;
+        static constexpr size_t MAX_ERRORS = 32;
+    };
 
-        return true; // Placeholder
+    /**
+     * @brief Verify the hash chain (and optional Ed25519 signatures) of the log file.
+     *
+     * Walks the JSONL log line by line and, for each record:
+     *   1. Re-extracts the canonical bytes (prev_hash || seq || ts_ms || sev || \0 ||
+     *      cat\0 act\0 sub\0 obj\0 res\0 msg).
+     *   2. Recomputes BLAKE2b-256 over those bytes and compares to the stored "hash".
+     *   3. Verifies that "prev" matches the previous record's "hash" (zeros for record 1).
+     *   4. If the record carries "sig"/"pub", verifies the Ed25519 detached signature
+     *      over the recomputed hash with the embedded public key.
+     *
+     * @param start_seq  Inclusive lower bound on sequence number (default: from start of file)
+     * @param end_seq    Inclusive upper bound on sequence number (default: to end of file)
+     * @return Detailed result; .valid is true only when every checked record passed.
+     */
+    VerifyChainResult verify_chain(std::optional<size_t> start_seq = std::nullopt,
+                                   std::optional<size_t> end_seq = std::nullopt) const {
+        VerifyChainResult r;
+        if (!config_.log_file) {
+            r.valid = false;
+            r.errors.push_back("audit log path not configured");
+            return r;
+        }
+        if (!std::filesystem::exists(*config_.log_file)) {
+            r.valid = false;
+            r.errors.push_back("audit log file does not exist: " + config_.log_file->string());
+            return r;
+        }
+
+        std::ifstream f(*config_.log_file);
+        if (!f) {
+            r.valid = false;
+            r.errors.push_back("failed to open audit log");
+            return r;
+        }
+
+        std::array<uint8_t, 32> expected_prev{}; // chain start = all zeros
+        bool have_prev = false;
+        size_t lineno = 0;
+        std::string line;
+
+        auto add_error = [&](std::string e, std::optional<uint64_t> seq = std::nullopt) {
+            r.valid = false;
+            if (seq && !r.first_failure_seq) r.first_failure_seq = seq;
+            if (r.errors.size() < VerifyChainResult::MAX_ERRORS) {
+                r.errors.push_back(std::move(e));
+            }
+        };
+
+        while (std::getline(f, line)) {
+            lineno++;
+            if (line.empty()) continue;
+
+            ParsedAuditLine p;
+            if (!parse_audit_line(line, p)) {
+                add_error("line " + std::to_string(lineno) + ": parse failed");
+                continue;
+            }
+
+            if (start_seq && p.seq < *start_seq) {
+                // Still need to keep chain context, so update expected_prev from this record's hash.
+                expected_prev = p.current_hash;
+                have_prev = true;
+                continue;
+            }
+            if (end_seq && p.seq > *end_seq) break;
+
+            // 1. Chain link: prev must match previous record's hash (or zeros for record 1).
+            std::array<uint8_t, 32> expected = have_prev ? expected_prev : std::array<uint8_t, 32>{};
+            if (p.prev_hash != expected) {
+                add_error("seq " + std::to_string(p.seq) + ": prev_hash does not match previous record's hash",
+                          p.seq);
+            }
+
+            // 2. Recompute canonical bytes & hash.
+            AuditRecord rec;
+            rec.previous_hash    = p.prev_hash;
+            rec.sequence_number  = p.seq;
+            rec.timestamp        = std::chrono::system_clock::time_point(std::chrono::milliseconds(p.ts_ms));
+            rec.severity         = p.severity;
+            rec.category         = p.category;
+            rec.action           = p.action;
+            rec.subject          = p.subject;
+            rec.object           = p.object;
+            rec.result           = p.result;
+            rec.message          = p.message;
+            auto canon  = canonical_bytes(rec);
+            auto computed = blake2b_hash(canon);
+            if (computed != p.current_hash) {
+                add_error("seq " + std::to_string(p.seq) + ": recomputed hash does not match stored hash",
+                          p.seq);
+            }
+
+            // 3. Optional signature verification.
+            if (p.has_sig) {
+                r.records_signed++;
+                int sig_ok = crypto_sign_verify_detached(
+                    p.sig.data(),
+                    p.current_hash.data(), p.current_hash.size(),
+                    p.signing_key.data());
+                if (sig_ok == 0) {
+                    r.records_signed_valid++;
+                } else {
+                    add_error("seq " + std::to_string(p.seq) + ": Ed25519 signature failed to verify",
+                              p.seq);
+                }
+            }
+
+            r.records_checked++;
+            expected_prev = p.current_hash;
+            have_prev = true;
+        }
+
+        return r;
     }
 
     /**
