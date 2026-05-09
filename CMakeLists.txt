@@ -111,6 +111,11 @@ endif()
 # ============================================================================
 
 # Core sources
+# Note: kem_interface.cpp and kem_factory.cpp are always compiled because the
+# CLI links against KEMFactory unconditionally (it's the dispatch point for
+# --kem x25519|hybrid|mlkem). The factory itself gates the PQC backends with
+# #ifdef NOCTURNE_ENABLE_PQC and throws a clear error if a PQC algorithm is
+# requested in a non-PQC build, so the X25519-only build still works.
 set(NOCTURNE_CORE_SOURCES
     nocturne-kx.cpp
     src/double_ratchet.hpp
@@ -118,18 +123,13 @@ set(NOCTURNE_CORE_SOURCES
     src/transport.hpp
     src/pkcs11_wrapper.cpp
     src/core/side_channel.cpp
+    src/pqc/kem/kem_interface.cpp
+    src/pqc/kem/kem_factory.cpp
 )
 
-# PQC sources (conditionally compiled)
+# PQC backend headers are header-only and pulled in via NOCTURNE_ENABLE_PQC.
 if(ENABLE_PQC)
-    set(NOCTURNE_PQC_SOURCES
-        src/pqc/kem/kem_interface.cpp
-        src/pqc/kem/kem_factory.cpp
-        # Headers (header-only, included via include)
-        # src/pqc/kem/mlkem_wrapper.hpp
-        # src/pqc/kem/hybrid_kem.hpp
-    )
-
+    set(NOCTURNE_PQC_SOURCES "")  # mlkem_wrapper.hpp / hybrid_kem.hpp are header-only
     add_compile_definitions(NOCTURNE_ENABLE_PQC)
 else()
     set(NOCTURNE_PQC_SOURCES "")

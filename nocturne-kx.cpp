@@ -43,6 +43,7 @@
 #include "src/transport.hpp"
 #include "src/core/side_channel.hpp"
 #include "src/hsm/pkcs11_hsm.hpp"
+#include "src/pqc/kem/kem_factory.hpp"
 #include <iomanip>
 
 // Platform-specific headers for memory protection
@@ -967,6 +968,13 @@ namespace nocturne {
 constexpr uint8_t VERSION = 0x03;
 constexpr uint8_t FLAG_HAS_SIG = 0x01;
 constexpr uint8_t FLAG_HAS_RATCHET = 0x02;
+// When set, eph_pk is unused (zeroed) and the receiver derives the AEAD key
+// by decapsulating pqc_kem_ct via KEMFactory(pqc_kem_type) with the receiver's
+// KEM secret key. Used by hybrid X25519+ML-KEM-1024 and pure ML-KEM-1024 modes.
+constexpr uint8_t FLAG_HAS_PQC_KEM = 0x04;
+// Maximum KEM ciphertext size we accept (hybrid is 1601B; cap conservatively at
+// 4 KiB to leave headroom for future schemes while bounding DoS exposure).
+constexpr size_t MAX_PQC_KEM_CT_SIZE = 4 * 1024;
 
 using Bytes = std::vector<uint8_t>;
 
@@ -1046,6 +1054,10 @@ struct Packet {
     std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES> nonce{};
     uint64_t counter{0}; // monotonic per-sender
     std::optional<std::array<uint8_t, crypto_kx_PUBLICKEYBYTES>> ratchet_pk; // optional
+    // PQC KEM fields — populated only when FLAG_HAS_PQC_KEM is set in flags.
+    // pqc_kem_type matches nocturne::pqc::KEMType (0=X25519, 1=Hybrid, 2=ML-KEM-1024).
+    uint8_t pqc_kem_type{0};
+    Bytes pqc_kem_ct;
     Bytes aad;
     Bytes ciphertext; // includes Poly1305 tag
     std::optional<std::array<uint8_t, crypto_sign_BYTES>> signature;
@@ -1082,6 +1094,13 @@ inline Bytes serialize(const Packet& p) {
     if (p.flags & FLAG_HAS_RATCHET) {
         if (!p.ratchet_pk) throw std::runtime_error("ratchet flag set but pk missing");
         out.insert(out.end(), p.ratchet_pk->begin(), p.ratchet_pk->end());
+    }
+    if (p.flags & FLAG_HAS_PQC_KEM) {
+        if (p.pqc_kem_ct.empty()) throw std::runtime_error("pqc-kem flag set but ct missing");
+        if (p.pqc_kem_ct.size() > MAX_PQC_KEM_CT_SIZE) throw std::runtime_error("pqc kem ct too large");
+        out.push_back(p.pqc_kem_type);
+        nocturne::write_u32_le(out, static_cast<uint32_t>(p.pqc_kem_ct.size()));
+        out.insert(out.end(), p.pqc_kem_ct.begin(), p.pqc_kem_ct.end());
     }
     nocturne::write_u32_le(out, static_cast<uint32_t>(p.aad.size()));
     nocturne::write_u32_le(out, static_cast<uint32_t>(p.ciphertext.size()));
@@ -1141,6 +1160,17 @@ inline Packet deserialize(const Bytes& in) {
         std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rpk{};
         get(rpk.data(), rpk.size());
         p.ratchet_pk = rpk;
+    }
+
+    if (p.flags & FLAG_HAS_PQC_KEM) {
+        get(&p.pqc_kem_type, 1);
+        get(tmp4, 4);
+        uint32_t kem_ct_len = nocturne::read_u32_le(tmp4);
+        if (kem_ct_len == 0 || kem_ct_len > MAX_PQC_KEM_CT_SIZE) {
+            throw std::runtime_error("pqc kem ct size out of bounds");
+        }
+        p.pqc_kem_ct.resize(kem_ct_len);
+        get(p.pqc_kem_ct.data(), kem_ct_len);
     }
 
     get(tmp4,4); uint32_t aad_len = nocturne::read_u32_le(tmp4);
@@ -1968,7 +1998,200 @@ nocturne::Bytes decrypt_packet(
     if (pt.size() > 1024 * 1024) { // 1MB limit
         throw std::runtime_error("decrypted plaintext too large");
     }
-    
+
+    return pt;
+}
+
+// ============================================================================
+// Post-Quantum / Hybrid KEM encrypt/decrypt
+// ============================================================================
+//
+// These run alongside the classic X25519 encrypt_packet/decrypt_packet. They
+// use the KEMFactory in src/pqc/kem to encapsulate a shared secret with the
+// receiver's KEM public key, then derive the AEAD key from that secret. The
+// resulting packet has FLAG_HAS_PQC_KEM set; the sender's KEM ciphertext is
+// transmitted in pqc_kem_ct, and eph_pk is left zeroed.
+//
+// kem_type values match nocturne::pqc::KEMType:
+//   1 = HYBRID_X25519_MLKEM1024 (recommended; 1600B pk, 3200B sk, 1601B ct)
+//   2 = PURE_MLKEM1024          (1568B pk, 3168B sk, 1568B ct)
+
+inline std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>
+derive_aead_key_from_kem_secret(const std::array<uint8_t, 32>& kem_ss,
+                                const std::string& info) {
+    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> k{};
+    if (crypto_generichash(k.data(), k.size(), kem_ss.data(), kem_ss.size(),
+                           reinterpret_cast<const uint8_t*>(info.data()), info.size()) != 0) {
+        throw std::runtime_error("kem aead key derivation failed");
+    }
+    return k;
+}
+
+nocturne::Bytes encrypt_packet_kem(
+    nocturne::pqc::KEMType kem_type,
+    const std::vector<uint8_t>& receiver_pk,
+    const nocturne::Bytes& plaintext,
+    const nocturne::Bytes& aad = {},
+    uint32_t rotation_id = 0,
+    HSMInterface* signer = nullptr,
+    ReplayDB* rdb = nullptr,
+    const std::string& session_id = "")
+{
+    using namespace nocturne;
+    nocturne::check_sodium();
+
+    if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
+        throw std::runtime_error("encrypt_packet_kem: use encrypt_packet for X25519");
+    }
+
+    auto kem = nocturne::pqc::KEMFactory{}.create(kem_type);
+    if (receiver_pk.size() != kem->public_key_size()) {
+        throw std::runtime_error("receiver kem pk size mismatch (expected " +
+                                 std::to_string(kem->public_key_size()) + ", got " +
+                                 std::to_string(receiver_pk.size()) + ")");
+    }
+
+    // Rate limit on the receiver pk (use SHA-style identifier from the first
+    // 32 bytes of the kem pk; full-pk hashing isn't necessary for a rate key).
+    std::string rate_limit_id = "encrypt_kem:" +
+        hexify(receiver_pk.data(), std::min<size_t>(receiver_pk.size(), 32));
+    if (!session_id.empty()) rate_limit_id += ":" + session_id;
+    if (!rate_limiting::allow_request(rate_limit_id)) {
+        throw std::runtime_error("Rate limit exceeded for kem encryption operation");
+    }
+
+    auto [kem_ct, kem_ss] = kem->encapsulate(receiver_pk);
+    auto key = derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4");
+
+    Packet p;
+    p.version = VERSION;
+    p.flags = FLAG_HAS_PQC_KEM;
+    p.rotation_id = rotation_id;
+    // eph_pk left zeroed (unused when FLAG_HAS_PQC_KEM is set)
+    randombytes_buf(p.nonce.data(), p.nonce.size());
+    p.pqc_kem_type = static_cast<uint8_t>(kem_type);
+    p.pqc_kem_ct = std::move(kem_ct.ciphertext);
+
+    if (rdb) {
+        std::string rid = "tx-kem:" +
+            hexify(receiver_pk.data(), std::min<size_t>(receiver_pk.size(), 32));
+        uint64_t prev = rdb->get(rid);
+        p.counter = prev + 1;
+        rdb->set(rid, p.counter);
+    } else {
+        uint64_t c; randombytes_buf(&c, sizeof(c)); p.counter = c;
+    }
+
+    p.aad = aad;
+    p.ciphertext = aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
+
+    if (signer) {
+        if (!signer->is_healthy()) throw std::runtime_error("HSM is not healthy");
+        Packet unsigned_p = p;
+        unsigned_p.flags &= ~FLAG_HAS_SIG;
+        unsigned_p.signature = std::nullopt;
+        Bytes to_sign = serialize(unsigned_p);
+        if (!session_id.empty()) {
+            to_sign.insert(to_sign.end(), session_id.begin(), session_id.end());
+        }
+        auto sig = signer->sign(to_sign.data(), to_sign.size());
+        p.flags |= FLAG_HAS_SIG;
+        p.signature = sig;
+    }
+
+    auto out = serialize(p);
+
+    // Wipe sensitive material before returning.
+    nocturne::side_channel::secure_zero_memory(key.data(), key.size());
+    nocturne::side_channel::flush_cache_line(key.data());
+    nocturne::side_channel::memory_barrier();
+    return out;
+}
+
+nocturne::Bytes decrypt_packet_kem(
+    const std::vector<uint8_t>& receiver_pk,
+    const std::vector<uint8_t>& receiver_sk,
+    const nocturne::Bytes& packet_bytes,
+    const std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>>& opt_expected_signer_ed25519_pk = std::nullopt,
+    ReplayDB* rdb = nullptr,
+    std::optional<uint32_t> min_rotation_id = std::nullopt,
+    const std::string& session_id = "")
+{
+    using namespace nocturne;
+    nocturne::check_sodium();
+
+    Packet p = nocturne::deserialize(packet_bytes);
+
+    if (!(p.flags & FLAG_HAS_PQC_KEM) || p.pqc_kem_ct.empty()) {
+        throw std::runtime_error("packet is not a PQC/KEM packet");
+    }
+
+    auto kem_type = static_cast<nocturne::pqc::KEMType>(p.pqc_kem_type);
+    if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
+        throw std::runtime_error("X25519 packet flagged as PQC — refusing");
+    }
+
+    auto kem = nocturne::pqc::KEMFactory{}.create(kem_type);
+    if (receiver_pk.size() != kem->public_key_size()) {
+        throw std::runtime_error("receiver kem pk size mismatch");
+    }
+    if (receiver_sk.size() != kem->secret_key_size()) {
+        throw std::runtime_error("receiver kem sk size mismatch");
+    }
+    if (p.pqc_kem_ct.size() != kem->ciphertext_size()) {
+        throw std::runtime_error("kem ciphertext size mismatch");
+    }
+
+    std::string rate_limit_id = "decrypt_kem:" +
+        hexify(receiver_pk.data(), std::min<size_t>(receiver_pk.size(), 32));
+    if (!session_id.empty()) rate_limit_id += ":" + session_id;
+    if (!rate_limiting::allow_request(rate_limit_id)) {
+        throw std::runtime_error("Rate limit exceeded for kem decryption operation");
+    }
+
+    if (opt_expected_signer_ed25519_pk.has_value()) {
+        if (!(p.flags & FLAG_HAS_SIG) || !p.signature)
+            throw std::runtime_error("missing required signature");
+        Packet unsigned_p = p;
+        unsigned_p.flags &= ~FLAG_HAS_SIG;
+        unsigned_p.signature = std::nullopt;
+        Bytes signed_region = serialize(unsigned_p);
+        if (!session_id.empty()) {
+            signed_region.insert(signed_region.end(), session_id.begin(), session_id.end());
+        }
+        if (!ed25519_verify(signed_region, *opt_expected_signer_ed25519_pk, *p.signature))
+            throw std::runtime_error("signature verification failed");
+    }
+
+    if (min_rotation_id.has_value() && p.rotation_id < *min_rotation_id) {
+        throw std::runtime_error("stale rotation_id: reject message");
+    }
+
+    if (rdb) {
+        std::string rid = "rx-kem:" +
+            hexify(receiver_pk.data(), std::min<size_t>(receiver_pk.size(), 32));
+        uint64_t last = rdb->get(rid);
+        if (p.counter <= last) throw std::runtime_error("replay detected: counter too small");
+        if (p.counter > last + 1000) {
+            std::cerr << "WARNING: Large counter gap detected: " << last << " -> " << p.counter << std::endl;
+        }
+        rdb->set(rid, p.counter);
+    }
+
+    nocturne::pqc::KEMCiphertext ct;
+    ct.type = kem_type;
+    ct.version = static_cast<uint32_t>(p.version);
+    ct.ciphertext = p.pqc_kem_ct;
+    auto kem_ss = kem->decapsulate(ct, receiver_sk);
+    auto key = derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4");
+
+    auto pt = aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext);
+
+    nocturne::side_channel::secure_zero_memory(key.data(), key.size());
+    nocturne::side_channel::flush_cache_line(key.data());
+    nocturne::side_channel::memory_barrier();
+
+    if (pt.size() > 1024 * 1024) throw std::runtime_error("decrypted plaintext too large");
     return pt;
 }
 
@@ -2004,17 +2227,25 @@ R"(nocturne-kx (C++23, libsodium) - hardened prototype v3
 
 Subcommands:
 
-  gen-receiver <outdir>
-      -> Writes receiver_x25519_pk.bin and receiver_x25519_sk.bin
+  gen-receiver <outdir> [--kem x25519|hybrid|mlkem]
+      x25519 (default): writes receiver_x25519_{pk,sk}.bin (32B each, classic ECDH)
+      hybrid:           writes receiver_hybrid_{pk,sk}.bin (1600B/3200B, X25519+ML-KEM-1024)
+      mlkem:            writes receiver_mlkem_{pk,sk}.bin (1568B/3168B, FIPS 203 Level 5)
 
   gen-signer <outdir>
       -> Writes sender_ed25519_pk.bin and sender_ed25519_sk.bin (file-backed keys)
 
-  encrypt --rx-pk <file> [--sign-hsm-uri file://<skfile> or hsm://<id>] [--aad <str>] [--rotation-id <n>] [--ratchet]
+  encrypt --rx-pk <file> [--kem x25519|hybrid|mlkem]
+          [--sign-hsm-uri file://<skfile> or hsm://<id>] [--aad <str>] [--rotation-id <n>] [--ratchet]
           --in <pt> --out <pkt> [--replay-db <path>] [--mac-key <file>]
+      Default --kem is x25519. Hybrid/mlkem produce post-quantum-safe packets
+      with FLAG_HAS_PQC_KEM set; the receiver auto-detects on decrypt.
 
   decrypt --rx-pk <file> --rx-sk <file> [--expect-signer <file>] [--min-rotation <n>] --in <pkt> --out <pt>
           [--replay-db <path>] [--mac-key <file>]
+      KEM mode is auto-detected from the packet header. The rx-pk/rx-sk file
+      sizes must match the mode: 32B for X25519, 1600B/3200B for hybrid,
+      1568B/3168B for mlkem.
 
   self-test
       -> Runs a suite of self-tests to verify basic functionality.
@@ -2100,13 +2331,38 @@ int main(int argc, char** argv) {
         std::string cmd = args[0];
 
         if (cmd == "gen-receiver") {
-            if (argc != 3) { usage(); return 1; }
-            std::filesystem::path outdir = argv[2];
+            if (args.size() < 2) { usage(); return 1; }
+            std::filesystem::path outdir = args[1];
+            std::string kem_str = "x25519";
+            for (size_t i = 2; i < args.size(); ++i) {
+                if (args[i] == "--kem") {
+                    if (i + 1 >= args.size()) throw std::runtime_error("missing value for --kem");
+                    kem_str = args[++i];
+                } else {
+                    throw std::runtime_error("unknown argument: " + args[i]);
+                }
+            }
             std::filesystem::create_directories(outdir);
-            auto kp = nocturne::gen_x25519();
-            write_all_raw(outdir / "receiver_x25519_pk.bin", kp.pk.data(), kp.pk.size());
-            write_all_raw(outdir / "receiver_x25519_sk.bin", kp.sk.data(), kp.sk.size());
-            std::cout << "Wrote receiver keys to " << outdir << "\n";
+
+            if (kem_str == "x25519") {
+                auto kp = nocturne::gen_x25519();
+                write_all_raw(outdir / "receiver_x25519_pk.bin", kp.pk.data(), kp.pk.size());
+                write_all_raw(outdir / "receiver_x25519_sk.bin", kp.sk.data(), kp.sk.size());
+                std::cout << "Wrote X25519 receiver keys to " << outdir << "\n";
+            } else if (kem_str == "hybrid" || kem_str == "mlkem") {
+                auto kem_type = (kem_str == "hybrid")
+                    ? nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024
+                    : nocturne::pqc::KEMType::PURE_MLKEM1024;
+                auto kem = nocturne::pqc::KEMFactory{}.create(kem_type);
+                auto kp = kem->generate_keypair();
+                std::string base = "receiver_" + kem_str;
+                write_all_raw(outdir / (base + "_pk.bin"), kp.public_key.data(), kp.public_key.size());
+                write_all_raw(outdir / (base + "_sk.bin"), kp.secret_key.data(), kp.secret_key.size());
+                std::cout << "Wrote " << kem->algorithm_name() << " receiver keys to " << outdir
+                          << " (pk=" << kp.public_key.size() << "B, sk=" << kp.secret_key.size() << "B)\n";
+            } else {
+                throw std::runtime_error("unknown --kem value: " + kem_str + " (expected x25519|hybrid|mlkem)");
+            }
             return 0;
         }
 
@@ -2125,6 +2381,7 @@ int main(int argc, char** argv) {
             std::filesystem::path rxpk, in, out, replaydb_path, mac_key_path;
             std::string aad_str, signer_uri;
             uint32_t rotation_id = 0; bool use_ratchet = false;
+            std::string kem_str = "x25519"; // x25519 (classic) | hybrid | mlkem
             
             // ERROR HANDLING: Comprehensive input validation and error management
             try {
@@ -2155,6 +2412,7 @@ int main(int argc, char** argv) {
                         }
                     }
                     else if (a=="--ratchet") use_ratchet = true;
+                    else if (a=="--kem") kem_str = need(1);
                     else if (a=="--in") in = need(1);
                     else if (a=="--out") out = need(1);
                     else if (a=="--replay-db") replaydb_path = need(1);
@@ -2187,8 +2445,26 @@ int main(int argc, char** argv) {
                 return 1;
             }
             auto rxpk_bytes = read_all(rxpk);
-            if (rxpk_bytes.size() != crypto_kx_PUBLICKEYBYTES) throw std::runtime_error("receiver pk size mismatch");
-            std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rxpk_arr{}; std::memcpy(rxpk_arr.data(), rxpk_bytes.data(), rxpk_arr.size());
+
+            // Resolve --kem mode and validate the rx-pk file size against the chosen KEM.
+            nocturne::pqc::KEMType kem_type;
+            if (kem_str == "x25519") {
+                kem_type = nocturne::pqc::KEMType::CLASSIC_X25519;
+                if (rxpk_bytes.size() != crypto_kx_PUBLICKEYBYTES) {
+                    throw std::runtime_error("X25519 receiver pk size mismatch (expected 32, got " +
+                                             std::to_string(rxpk_bytes.size()) + ")");
+                }
+            } else if (kem_str == "hybrid") {
+                kem_type = nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024;
+            } else if (kem_str == "mlkem") {
+                kem_type = nocturne::pqc::KEMType::PURE_MLKEM1024;
+            } else {
+                throw std::runtime_error("unknown --kem value: " + kem_str + " (expected x25519|hybrid|mlkem)");
+            }
+            std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rxpk_arr{};
+            if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
+                std::memcpy(rxpk_arr.data(), rxpk_bytes.data(), rxpk_arr.size());
+            }
 
             // HSM VALIDATION: Comprehensive HSM URI validation and error handling
             std::unique_ptr<HSMInterface> signer = nullptr;
@@ -2256,9 +2532,21 @@ int main(int argc, char** argv) {
             ReplayDB rdb(replaydb_path.empty()?std::filesystem::path(std::string(std::getenv("HOME")?std::getenv("HOME"):".")) / ".nocturne" / "replaydb.bin": replaydb_path, mac_key, opt_tpm_counter);
             ReplayDB* rdbp = replaydb_path.empty()?nullptr:&rdb;
 
-            auto pkt = encrypt_packet(rxpk_arr, pt, aad, rotation_id, use_ratchet, signer.get(), rdbp);
+            nocturne::Bytes pkt;
+            if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
+                pkt = encrypt_packet(rxpk_arr, pt, aad, rotation_id, use_ratchet, signer.get(), rdbp);
+                std::cout << "Encrypted (X25519) -> " << out << " (" << pkt.size() << " bytes)\n";
+            } else {
+                if (use_ratchet) {
+                    std::cerr << "WARNING: --ratchet ignored in PQC/KEM mode (DR uses its own key path)\n";
+                }
+                pkt = encrypt_packet_kem(kem_type, rxpk_bytes, pt, aad, rotation_id,
+                                         signer.get(), rdbp);
+                const char* algo = (kem_type == nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024)
+                                   ? "Hybrid X25519+ML-KEM-1024" : "ML-KEM-1024";
+                std::cout << "Encrypted (" << algo << ") -> " << out << " (" << pkt.size() << " bytes)\n";
+            }
             write_all(out, pkt);
-            std::cout << "Encrypted -> " << out << " (" << pkt.size() << " bytes)\n";
             return 0;
         }
 
@@ -2289,10 +2577,6 @@ int main(int argc, char** argv) {
             }
             if (rxpk.empty() || rxsk.empty() || in.empty() || out.empty()) throw std::runtime_error("missing required args");
             auto rxpk_b = read_all(rxpk); auto rxsk_b = read_all(rxsk);
-            if (rxpk_b.size()!=crypto_kx_PUBLICKEYBYTES) throw std::runtime_error("receiver pk size mismatch");
-            if (rxsk_b.size()!=crypto_kx_SECRETKEYBYTES) throw std::runtime_error("receiver sk size mismatch");
-            std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rxpk_arr{}; std::array<uint8_t, crypto_kx_SECRETKEYBYTES> rxsk_arr{};
-            std::memcpy(rxpk_arr.data(), rxpk_b.data(), rxpk_arr.size()); std::memcpy(rxsk_arr.data(), rxsk_b.data(), rxsk_arr.size());
 
             std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> expectpk_arr = std::nullopt;
             if (!expectpk_path.empty()) {
@@ -2306,9 +2590,29 @@ int main(int argc, char** argv) {
             ReplayDB* rdbp = replaydb_path.empty()?nullptr:&rdb;
 
             auto pkt = read_all(in);
-            auto pt = decrypt_packet(rxpk_arr, rxsk_arr, pkt, expectpk_arr, rdbp, min_rotation);
+
+            // Auto-detect KEM mode from the packet header. Peek at the flags byte
+            // (offset 1, immediately after the version byte) without doing a full
+            // deserialize — keeps the dispatch cheap and avoids double-parsing.
+            if (pkt.size() < 2) throw std::runtime_error("packet too small to inspect");
+            bool is_pqc = (pkt[1] & nocturne::FLAG_HAS_PQC_KEM) != 0;
+
+            nocturne::Bytes pt;
+            if (!is_pqc) {
+                if (rxpk_b.size()!=crypto_kx_PUBLICKEYBYTES) throw std::runtime_error("X25519 receiver pk size mismatch");
+                if (rxsk_b.size()!=crypto_kx_SECRETKEYBYTES) throw std::runtime_error("X25519 receiver sk size mismatch");
+                std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rxpk_arr{};
+                std::array<uint8_t, crypto_kx_SECRETKEYBYTES> rxsk_arr{};
+                std::memcpy(rxpk_arr.data(), rxpk_b.data(), rxpk_arr.size());
+                std::memcpy(rxsk_arr.data(), rxsk_b.data(), rxsk_arr.size());
+                pt = decrypt_packet(rxpk_arr, rxsk_arr, pkt, expectpk_arr, rdbp, min_rotation);
+                std::cout << "Decrypted (X25519) -> " << out << " (" << pt.size() << " bytes)\n";
+            } else {
+                // KEMFactory + size validation happens inside decrypt_packet_kem.
+                pt = decrypt_packet_kem(rxpk_b, rxsk_b, pkt, expectpk_arr, rdbp, min_rotation);
+                std::cout << "Decrypted (PQC/KEM) -> " << out << " (" << pt.size() << " bytes)\n";
+            }
             write_all(out, pt);
-            std::cout << "Decrypted -> " << out << " (" << pt.size() << " bytes)\n";
             return 0;
         }
 
