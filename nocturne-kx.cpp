@@ -1936,6 +1936,8 @@ nocturne::Bytes decrypt_packet(
             .nonce   = p.nonce,
             .counter = p.counter,
             .ratchet_pk = p.ratchet_pk,
+            .pqc_kem_type = p.pqc_kem_type,
+            .pqc_kem_ct = p.pqc_kem_ct,
             .aad     = p.aad,
             .ciphertext = p.ciphertext,
             .signature  = std::nullopt

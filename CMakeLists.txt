@@ -196,6 +196,17 @@ if(BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/src
         )
 
+        # When PQC is on, kem_factory.cpp pulls in mlkem_wrapper.hpp, which
+        # includes <oqs/oqs.h>. Mirror the main target's PQC wiring so the
+        # test binary can compile and link the PQC backends.
+        if(ENABLE_PQC)
+            target_include_directories(nocturne-tests PRIVATE ${LIBOQS_INCLUDE_DIR})
+            target_link_libraries(nocturne-tests PRIVATE ${LIBOQS_LIBRARY})
+            if(WIN32)
+                target_link_libraries(nocturne-tests PRIVATE bcrypt)
+            endif()
+        endif()
+
         # Register tests
         include(CTest)
         if(COMMAND catch_discover_tests)
