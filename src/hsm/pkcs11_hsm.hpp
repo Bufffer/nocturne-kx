@@ -4,10 +4,13 @@
 #include "hsm_interface.hpp"
 #include "hsm_errors.hpp"
 #include "../core/side_channel.hpp"
+#include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <cstring>
+#include <deque>
 #include <mutex>
 #include <unordered_map>
-#include <condition_variable>
-#include <deque>
 #include <sodium.h>
 
 // PKCS#11 v2.40 headers
@@ -44,11 +47,13 @@ typedef void* CK_VOID_PTR;
 #define CKR_SESSION_HANDLE_INVALID 0x000000B3UL
 #define CKR_USER_ALREADY_LOGGED_IN 0x00000100UL
 #define CKR_USER_NOT_LOGGED_IN 0x00000101UL
+#define CKR_CRYPTOKI_ALREADY_INITIALIZED 0x00000191UL
 
 // PKCS#11 object/key types
 #define CKO_PRIVATE_KEY 0x00000003UL
 #define CKO_PUBLIC_KEY 0x00000002UL
 #define CKK_EC 0x00000003UL
+#define CKK_EC_EDWARDS 0x00000040UL
 #define CKA_CLASS 0x00000000UL
 #define CKA_KEY_TYPE 0x00000100UL
 #define CKA_TOKEN 0x00000001UL
@@ -62,6 +67,8 @@ typedef void* CK_VOID_PTR;
 // PKCS#11 mechanisms
 #define CKM_ECDSA 0x00001041UL
 #define CKM_ECDSA_SHA256 0x00001042UL
+// EdDSA (Ed25519/Ed448) — PKCS#11 v3.0+
+#define CKM_EDDSA 0x00001057UL
 
 // PKCS#11 flags
 #define CKF_RW_SESSION 0x00000002UL
@@ -492,7 +499,8 @@ public:
 
         try {
             // Initialize signing operation
-            CK_MECHANISM mechanism = {CKM_ECDSA, nullptr, 0};
+            // Ed25519 keys use CKM_EDDSA (PKCS#11 v3.0+); CKM_ECDSA is for NIST P-curves only.
+            CK_MECHANISM mechanism = {CKM_EDDSA, nullptr, 0};
 
             CK_RV rv = functions_->C_SignInit(session, &mechanism,
                                              key_cache_.private_key_handle);
@@ -543,7 +551,8 @@ public:
         CK_SESSION_HANDLE session = acquire_session();
 
         try {
-            CK_MECHANISM mechanism = {CKM_ECDSA, nullptr, 0};
+            // Ed25519 keys use CKM_EDDSA (PKCS#11 v3.0+); CKM_ECDSA is for NIST P-curves only.
+            CK_MECHANISM mechanism = {CKM_EDDSA, nullptr, 0};
 
             CK_RV rv = functions_->C_VerifyInit(session, &mechanism,
                                                key_cache_.public_key_handle);
