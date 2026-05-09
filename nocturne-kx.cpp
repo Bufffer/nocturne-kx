@@ -42,6 +42,7 @@
 #include "src/handshake.hpp"
 #include "src/transport.hpp"
 #include "src/core/side_channel.hpp"
+#include "src/hsm/pkcs11_hsm.hpp"
 #include <iomanip>
 
 // Platform-specific headers for memory protection
@@ -1427,7 +1428,9 @@ public:
         std::istringstream iss(json_s);
         std::string line;
         while (std::getline(iss,line)) {
-            auto pos = line.find(':'); if (pos==std::string::npos) continue;
+            // SECURITY: composite keys may contain ':' (e.g. rx=tx:hex&snd=-&sid=-),
+            // so split on the LAST colon — counter is always the trailing field.
+            auto pos = line.rfind(':'); if (pos==std::string::npos) continue;
             std::string k = line.substr(0,pos);
             std::string val_str = line.substr(pos+1);
 
@@ -1668,83 +1671,101 @@ public:
     }
 };
 
-// HSM INTEGRATION: Basic PKCS#11 implementation
+// HSM INTEGRATION: PKCS#11 adapter
+//
+// Bridges the CLI-facing inline HSMInterface (defined in this file) to the
+// production-grade nocturne::hsm::PKCS11HSM in src/hsm/pkcs11_hsm.hpp.
+//
+// Configuration via environment variables:
+//   PKCS11_LIB          - absolute path to PKCS#11 module (.so/.dll). REQUIRED.
+//   NOCTURNE_HSM_PIN    - user PIN for C_Login (optional but needed for sign).
+//                         The PIN buffer is securely zeroed after authentication.
+//   NOCTURNE_HSM_FIPS   - "1" to require FIPS mode (default: 0).
+//
+// CLI URI: hsm://<token_label>:<key_label>
 class PKCS11HSM : public HSMInterface {
 private:
     std::string token_id_;
     std::string key_label_;
-    bool initialized_{false};
-    
-    // Secure memory for temporary operations
-    memory_protection::SecureMemory<uint8_t> temp_buffer_;
-    
+    std::unique_ptr<nocturne::hsm::PKCS11HSM> impl_;
+
+    static std::string env_or_empty(const char* name) {
+        const char* v = std::getenv(name);
+        return v ? std::string(v) : std::string();
+    }
+
 public:
-    PKCS11HSM(const std::string& token_id, const std::string& key_label) 
-        : token_id_(token_id), key_label_(key_label), temp_buffer_(crypto_sign_SECRETKEYBYTES) {
-        
-        // HSM VALIDATION: Validate HSM parameters
+    PKCS11HSM(const std::string& token_id, const std::string& key_label)
+        : token_id_(token_id), key_label_(key_label) {
         if (token_id.empty()) {
-            throw std::runtime_error("HSM token ID cannot be empty");
+            throw nocturne::HSMError("HSM token ID cannot be empty");
         }
         if (key_label.empty()) {
-            throw std::runtime_error("HSM key label cannot be empty");
+            throw nocturne::HSMError("HSM key label cannot be empty");
         }
-        
-        // For now, perform a best-effort placeholder that simulates a healthy HSM
-        // In production, replace this with real PKCS#11 init (dlopen, C_GetFunctionList, C_OpenSession, C_Login, etc.)
-        initialized_ = true;
+
+        std::string lib_path = env_or_empty("PKCS11_LIB");
+        if (lib_path.empty()) {
+            throw nocturne::HSMError(
+                "PKCS#11 library path not configured: set PKCS11_LIB env var "
+                "(e.g. /usr/lib/softhsm/libsofthsm2.so)");
+        }
+
+        bool require_fips = env_or_empty("NOCTURNE_HSM_FIPS") == "1";
+
+        try {
+            impl_ = std::make_unique<nocturne::hsm::PKCS11HSM>(
+                lib_path, token_id_, key_label_, require_fips);
+        } catch (const std::exception& e) {
+            throw nocturne::HSMError(std::string("PKCS#11 init failed: ") + e.what());
+        }
+
+        // Optional authentication via env var (PIN buffer is zeroed inside authenticate()).
+        std::string pin = env_or_empty("NOCTURNE_HSM_PIN");
+        if (!pin.empty()) {
+            std::string pin_copy = pin; // mutable copy for authenticate()
+            // Best-effort scrub of the env-derived buffer too.
+            nocturne::side_channel::secure_zero_memory(
+                pin.data(), pin.size());
+            if (!impl_->authenticate(pin_copy)) {
+                throw nocturne::HSMError("PKCS#11 C_Login failed (check PIN/lockout)");
+            }
+        }
     }
-    
+
+    ~PKCS11HSM() override {
+        if (impl_) {
+            try { impl_->logout(); } catch (...) { /* dtor silent */ }
+        }
+        // unique_ptr destruction handles C_Finalize + library unload.
+    }
+
     std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
-        (void)data;  // Unused in stub - will be used in production implementation
-        (void)len;   // Unused in stub - will be used in production implementation
-
-        if (!initialized_) {
-            throw nocturne::HSMError("PKCS#11 HSM not initialized");
-        }
-
-        // If PKCS#11 not implemented, fail fast to avoid returning bogus signatures
-        throw nocturne::HSMError("PKCS#11 signing not implemented in this build");
+        if (!impl_) throw nocturne::HSMError("PKCS#11 HSM not initialized");
+        return impl_->sign(data, len);
     }
-    
+
     std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() override {
-        if (!initialized_) {
-            return std::nullopt;
-        }
-        
-        // TODO: Retrieve public key from HSM
-        // This would involve:
-        // 1. Finding the key object on HSM
-        // 2. Extracting public key attributes
-        // 3. Returning public key
-        
-        // For now, return a placeholder public key
-        std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> pk{};
-        randombytes_buf(pk.data(), pk.size());
-        
-        return pk;
+        if (!impl_) return std::nullopt;
+        return impl_->get_public_key();
     }
-    
+
     bool has_key(const std::string& label) override {
-        return initialized_ && label == key_label_;
+        return impl_ && impl_->has_key(label);
     }
-    
+
     std::vector<uint8_t> generate_random(size_t length) override {
-        std::vector<uint8_t> random(length);
-        randombytes_buf(random.data(), length);
-        return random;
+        if (!impl_) {
+            // Fallback to libsodium if HSM not available.
+            std::vector<uint8_t> random(length);
+            randombytes_buf(random.data(), length);
+            return random;
+        }
+        return impl_->generate_random(length);
     }
-    
+
     bool is_healthy() override {
-        return initialized_;
-    }
-    
-    ~PKCS11HSM() {
-        // TODO: Clean up PKCS#11 session
-        // This would involve:
-        // 1. Closing signing session
-        // 2. Logging out from token
-        // 3. Finalizing PKCS#11 library
+        return impl_ && impl_->is_healthy();
     }
 };
 
