@@ -5,6 +5,36 @@
 #include <sstream>
 #include <iomanip>
 #include <ctime>
+#include <stdexcept>
+#include <mutex>
+#include <cstring>
+#include <cstdint>
+#include <string>
+
+#ifdef _WIN32
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #pragma comment(lib, "Ws2_32.lib")
+  using nocturne_socket_t = SOCKET;
+  #define NOCTURNE_INVALID_SOCKET INVALID_SOCKET
+  #define NOCTURNE_SOCKET_ERROR   SOCKET_ERROR
+  #define nocturne_close_socket   ::closesocket
+#else
+  #include <sys/types.h>
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <arpa/inet.h>
+  #include <netdb.h>
+  #include <unistd.h>
+  #include <errno.h>
+  using nocturne_socket_t = int;
+  #define NOCTURNE_INVALID_SOCKET (-1)
+  #define NOCTURNE_SOCKET_ERROR   (-1)
+  #define nocturne_close_socket   ::close
+#endif
 
 namespace nocturne {
 namespace security {
@@ -379,14 +409,181 @@ private:
         }
     }
 
+    // ========================================================================
+    // Network transport (P2.6)
+    // ========================================================================
+
+    static void ensure_winsock_initialized() {
+#ifdef _WIN32
+        static std::once_flag init_flag;
+        static int init_result = 0;
+        std::call_once(init_flag, []() {
+            WSADATA wsa{};
+            init_result = WSAStartup(MAKEWORD(2, 2), &wsa);
+        });
+        if (init_result != 0) {
+            throw std::runtime_error("WSAStartup failed: " + std::to_string(init_result));
+        }
+#endif
+    }
+
+    /**
+     * @brief Resolve host+port; returns getaddrinfo result chain (must be freed).
+     *        Throws on failure with a host:port-tagged message.
+     */
+    static struct addrinfo* resolve(const std::string& host,
+                                    uint16_t port,
+                                    int socktype) {
+        struct addrinfo hints{};
+        hints.ai_family = AF_UNSPEC;        // v4 or v6
+        hints.ai_socktype = socktype;
+        hints.ai_protocol = (socktype == SOCK_DGRAM) ? IPPROTO_UDP : IPPROTO_TCP;
+
+        std::string port_str = std::to_string(port);
+        struct addrinfo* result = nullptr;
+        int rc = ::getaddrinfo(host.c_str(), port_str.c_str(), &hints, &result);
+        if (rc != 0 || result == nullptr) {
+            const char* msg = gai_strerror(rc);
+            throw std::runtime_error(std::string("SIEM resolve ") + host + ":" +
+                                     port_str + " failed: " + (msg ? msg : "unknown"));
+        }
+        return result;
+    }
+
+    /**
+     * @brief Send a UDP datagram to host:port. Throws on socket/sendto failure.
+     */
+    static void udp_send_to(const std::string& host,
+                            uint16_t port,
+                            const std::string& payload) {
+        ensure_winsock_initialized();
+        struct addrinfo* ai = resolve(host, port, SOCK_DGRAM);
+
+        nocturne_socket_t sock = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (sock == NOCTURNE_INVALID_SOCKET) {
+            ::freeaddrinfo(ai);
+            throw std::runtime_error("SIEM UDP socket() failed");
+        }
+
+        // RFC 5424 hard cap is 8192 bytes for UDP transport with TLS, and
+        // implementations MUST accept ≥480. Anything larger risks fragmentation
+        // and silent SIEM-side drops, so refuse rather than truncate.
+        if (payload.size() > 8192) {
+            nocturne_close_socket(sock);
+            ::freeaddrinfo(ai);
+            throw std::runtime_error("SIEM UDP payload exceeds 8192 bytes");
+        }
+
+#ifdef _WIN32
+        int sent = ::sendto(sock, payload.data(), static_cast<int>(payload.size()),
+                            0, ai->ai_addr, static_cast<int>(ai->ai_addrlen));
+#else
+        ssize_t sent = ::sendto(sock, payload.data(), payload.size(),
+                                0, ai->ai_addr, ai->ai_addrlen);
+#endif
+        nocturne_close_socket(sock);
+        ::freeaddrinfo(ai);
+
+        if (sent == NOCTURNE_SOCKET_ERROR ||
+            static_cast<size_t>(sent) != payload.size()) {
+            throw std::runtime_error("SIEM UDP sendto() failed or truncated");
+        }
+    }
+
+    /**
+     * @brief Send a TCP message to host:port using RFC 6587 octet-counting
+     *        framing (`<len> <msg>`). Single-shot connect/send/close — keep-alive
+     *        and retries are explicitly out of scope here; the caller (audit
+     *        logger) reports failures via `on_error_`.
+     */
+    static void tcp_send_to(const std::string& host,
+                            uint16_t port,
+                            const std::string& payload,
+                            bool octet_counting_frame) {
+        ensure_winsock_initialized();
+        struct addrinfo* ai = resolve(host, port, SOCK_STREAM);
+
+        nocturne_socket_t sock = NOCTURNE_INVALID_SOCKET;
+        struct addrinfo* it = ai;
+        for (; it != nullptr; it = it->ai_next) {
+            sock = ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+            if (sock == NOCTURNE_INVALID_SOCKET) continue;
+            if (::connect(sock, it->ai_addr,
+#ifdef _WIN32
+                          static_cast<int>(it->ai_addrlen)
+#else
+                          it->ai_addrlen
+#endif
+                          ) == 0) {
+                break;
+            }
+            nocturne_close_socket(sock);
+            sock = NOCTURNE_INVALID_SOCKET;
+        }
+        ::freeaddrinfo(ai);
+
+        if (sock == NOCTURNE_INVALID_SOCKET) {
+            throw std::runtime_error("SIEM TCP connect to " + host + ":" +
+                                     std::to_string(port) + " failed");
+        }
+
+        std::string framed;
+        if (octet_counting_frame) {
+            // RFC 6587 §3.4.1: MSG-LEN SP SYSLOG-MSG
+            framed.reserve(payload.size() + 16);
+            framed += std::to_string(payload.size());
+            framed += ' ';
+            framed += payload;
+        } else {
+            // Non-transparent framing (RFC 6587 §3.4.2): trailing LF
+            framed.reserve(payload.size() + 1);
+            framed += payload;
+            framed += '\n';
+        }
+
+        const char* buf = framed.data();
+        size_t remaining = framed.size();
+        while (remaining > 0) {
+#ifdef _WIN32
+            int chunk = ::send(sock, buf, static_cast<int>(remaining), 0);
+#else
+            ssize_t chunk = ::send(sock, buf, remaining, MSG_NOSIGNAL);
+#endif
+            if (chunk == NOCTURNE_SOCKET_ERROR || chunk == 0) {
+                nocturne_close_socket(sock);
+                throw std::runtime_error("SIEM TCP send() failed");
+            }
+            buf += chunk;
+            remaining -= static_cast<size_t>(chunk);
+        }
+
+        nocturne_close_socket(sock);
+    }
+
 public:
     explicit SIEMConnector(const SIEMConfig& config) : config_(config) {}
 
     /**
-     * @brief Send record to SIEM
-     * @note This is a synchronous call. In production, use async queue.
+     * @brief Send record to SIEM (synchronous; AuditLogger wraps this in
+     *        try/catch and routes failures through on_error_).
+     *
+     * Transports (P2.6):
+     *   SYSLOG_UDP, CEF, LEEF → UDP datagram, RFC 5424 / CEF / LEEF body
+     *   SYSLOG_TCP            → TCP, RFC 6587 octet-counting
+     *
+     * Not yet wired (require optional deps; deferred to P2.5/P3):
+     *   SYSLOG_TLS    → needs OpenSSL (planned alongside TcpTlsTransport)
+     *   SPLUNK_HEC    → needs libcurl HTTPS POST
+     *   ELASTICSEARCH → needs libcurl HTTPS POST
+     *   KAFKA         → needs librdkafka
+     *   CUSTOM        → needs libcurl
      */
     void send(const AuditRecord& record) {
+        if (config_.type == SIEMType::NONE) return;
+        if (config_.host.empty()) {
+            throw std::runtime_error("SIEM host not configured");
+        }
+
         std::string formatted;
 
         switch (config_.type) {
@@ -409,19 +606,47 @@ public:
                 break;
 
             default:
-                return; // No SIEM configured
+                throw std::runtime_error(
+                    "SIEM transport not yet wired in this build");
         }
 
-        // TODO: Actual network send
-        // For UDP syslog: sendto()
-        // For TCP/TLS syslog: SSL_write()
-        // For HTTP (Splunk HEC): libcurl POST request
-        // For Kafka: kafka producer
+        switch (config_.type) {
+            case SIEMType::SYSLOG_UDP:
+            case SIEMType::CEF:
+            case SIEMType::LEEF:
+                // CEF / LEEF are typically transported over syslog UDP. The
+                // formatted body itself is fully parseable by ArcSight/QRadar.
+                udp_send_to(config_.host, config_.port, formatted);
+                return;
 
-        // Placeholder: print to stderr for now
-        // std::cerr << "[SIEM] " << formatted << std::endl;
+            case SIEMType::SYSLOG_TCP:
+                tcp_send_to(config_.host, config_.port, formatted,
+                            /*octet_counting_frame=*/true);
+                return;
 
-        (void)formatted; // Suppress unused warning
+            case SIEMType::SYSLOG_TLS:
+                throw std::runtime_error(
+                    "SIEM SYSLOG_TLS not yet wired (OpenSSL pending P2.5)");
+
+            case SIEMType::SPLUNK_HEC:
+                throw std::runtime_error(
+                    "SIEM SPLUNK_HEC not yet wired (libcurl pending)");
+
+            case SIEMType::ELASTICSEARCH:
+                throw std::runtime_error(
+                    "SIEM ELASTICSEARCH not yet wired (libcurl pending)");
+
+            case SIEMType::KAFKA:
+                throw std::runtime_error(
+                    "SIEM KAFKA not yet wired (librdkafka pending)");
+
+            case SIEMType::CUSTOM:
+                throw std::runtime_error(
+                    "SIEM CUSTOM webhook not yet wired (libcurl pending)");
+
+            default:
+                throw std::runtime_error("SIEM transport unknown");
+        }
     }
 
     /**

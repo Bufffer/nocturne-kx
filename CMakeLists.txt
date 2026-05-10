@@ -265,6 +265,24 @@ if(BUILD_TESTS)
         )
         add_test(NAME protocol-integration-test COMMAND protocol-integration-test)
 
+        # SIEM connector network transport tests (P2.6) — UDP/TCP loopback
+        # round-trip plus stub assertions for unwired transports.
+        add_executable(security-siem-test
+            tests/security/test_siem_connector.cpp
+        )
+        target_link_libraries(security-siem-test PRIVATE
+            Catch2::Catch2WithMain
+            ${SODIUM_LIBRARIES}
+        )
+        target_include_directories(security-siem-test PRIVATE
+            ${SODIUM_INCLUDE_DIRS}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        if(WIN32)
+            target_link_libraries(security-siem-test PRIVATE Ws2_32)
+        endif()
+        add_test(NAME security-siem-test COMMAND security-siem-test)
+
         message(STATUS "Comprehensive test suites enabled")
     endif()
 
