@@ -24,7 +24,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential catch2 softhsm2 git ninja-build
+        sudo apt-get install -y libsodium-dev libssl-dev pkg-config cmake build-essential catch2 softhsm2 git ninja-build
 
     - name: Configure CMake
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as Make.
@@ -70,7 +70,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential clang git ninja-build
+        sudo apt-get install -y libsodium-dev libssl-dev pkg-config cmake build-essential clang git ninja-build
 
     - name: Configure CMake with sanitizer
       run: |
@@ -98,7 +98,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential clang git ninja-build
+        sudo apt-get install -y libsodium-dev libssl-dev pkg-config cmake build-essential clang git ninja-build
 
     - name: Configure CMake with memory sanitizer
       run: |
@@ -129,7 +129,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          libsodium-dev pkg-config cmake build-essential clang git ninja-build
+          libsodium-dev libssl-dev pkg-config cmake build-essential clang git ninja-build
 
     - name: Configure CMake for fuzzing
       run: |
@@ -164,7 +164,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libsodium-dev pkg-config cmake build-essential cppcheck git ninja-build
+        sudo apt-get install -y libsodium-dev libssl-dev pkg-config cmake build-essential cppcheck git ninja-build
 
     - name: Static analysis with cppcheck
       run: |

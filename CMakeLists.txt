@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # OPTIONS
 # ============================================================================
 option(ENABLE_PQC "Enable Post-Quantum Cryptography support" ON)
+option(ENABLE_TLS_TRANSPORT "Enable TCP/TLS transport adapter (OpenSSL)" ON)
 option(BUILD_TESTS "Build tests" OFF)
 option(BUILD_FUZZER "Build fuzzer" OFF)
 option(BUILD_LIBOQS "Build liboqs from source (auto-detected)" OFF)
@@ -53,6 +54,21 @@ else()
     # Unix: Use pkg-config
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(SODIUM REQUIRED libsodium)
+endif()
+
+# OpenSSL (TLS transport adapter) - optional
+# When found, src/tcp_tls_transport.hpp can be used and the
+# tcp-tls-transport-test target is wired up. The main CLI does not yet
+# import the TLS transport, so OpenSSL is not linked into nocturne-kx.
+if(ENABLE_TLS_TRANSPORT)
+    find_package(OpenSSL QUIET)
+    if(OpenSSL_FOUND)
+        message(STATUS "Found OpenSSL: ${OPENSSL_VERSION} (${OPENSSL_SSL_LIBRARY})")
+        add_compile_definitions(NOCTURNE_ENABLE_TLS_TRANSPORT)
+    else()
+        message(STATUS "OpenSSL not found; TLS transport adapter disabled.")
+        set(ENABLE_TLS_TRANSPORT OFF)
+    endif()
 endif()
 
 # liboqs (Post-Quantum Cryptography) - optional but recommended
@@ -282,6 +298,26 @@ if(BUILD_TESTS)
             target_link_libraries(security-siem-test PRIVATE Ws2_32)
         endif()
         add_test(NAME security-siem-test COMMAND security-siem-test)
+
+        # TCP/TLS transport adapter tests (P2.5) — self-signed cert loopback,
+        # mTLS handshake, and clean-close detection.
+        if(ENABLE_TLS_TRANSPORT)
+            add_executable(tcp-tls-transport-test
+                tests/protocol/test_tcp_tls_transport.cpp
+            )
+            target_link_libraries(tcp-tls-transport-test PRIVATE
+                Catch2::Catch2WithMain
+                OpenSSL::SSL
+                OpenSSL::Crypto
+            )
+            target_include_directories(tcp-tls-transport-test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src
+            )
+            if(WIN32)
+                target_link_libraries(tcp-tls-transport-test PRIVATE Ws2_32)
+            endif()
+            add_test(NAME tcp-tls-transport-test COMMAND tcp-tls-transport-test)
+        endif()
 
         message(STATUS "Comprehensive test suites enabled")
     endif()
