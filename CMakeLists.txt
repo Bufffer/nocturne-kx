@@ -330,6 +330,21 @@ if(BUILD_TESTS)
         )
         add_test(NAME side-channel-test COMMAND side-channel-test)
 
+        # Foundation tests (P5.0) — error.hpp / result.hpp / byte_span.hpp.
+        # Header-only, no library deps; the test target exists primarily
+        # to force CI compilation of the new C++23 <expected> + <span>
+        # surface and prove the runner image's libstdc++ supports them.
+        add_executable(core-foundation-test
+            tests/core/test_error_result.cpp
+        )
+        target_link_libraries(core-foundation-test PRIVATE
+            Catch2::Catch2WithMain
+        )
+        target_include_directories(core-foundation-test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        add_test(NAME core-foundation-test COMMAND core-foundation-test)
+
         # Protocol integration tests
         add_executable(protocol-integration-test
             tests/protocol/test_integration.cpp

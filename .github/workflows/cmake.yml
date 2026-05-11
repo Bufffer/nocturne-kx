@@ -58,6 +58,15 @@ jobs:
       run: |
         ctest --output-on-failure || true
 
+    # P5.0 foundation: error.hpp + result.hpp + byte_span.hpp. Catches
+    # any libstdc++/libc++ regression that breaks std::expected /
+    # std::span on the runner image before downstream phases depend on
+    # them. Hard-failing.
+    - name: Foundation (error/result/byte_span) (must pass)
+      working-directory: ${{github.workspace}}/build
+      run: |
+        ./core-foundation-test "[foundation]"
+
     # Dedicated regression net for the PQC encrypt/decrypt path. Unlike the
     # ctest invocation above (which swallows failures with `|| true` because
     # a few suites flake on softhsm/network setup), this step intentionally
