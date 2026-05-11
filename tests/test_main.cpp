@@ -263,6 +263,107 @@ TEST_CASE("End-to-end encryption/decryption", "[e2e]") {
     }
 }
 
+#ifdef NOCTURNE_ENABLE_PQC
+// Regression net for commit 9b5c00b: a divergence between the version bound
+// into the KEM combined-secret on encrypt vs. decrypt produces a ciphertext
+// that round-trips through every CI compile/sanitizer check but fails AEAD
+// auth at runtime. End-to-end encrypt+decrypt is the only thing that catches
+// it. Exercise both PQC KEM types (hybrid X25519+ML-KEM-1024 and pure
+// ML-KEM-1024) plus the negative paths (wrong key, tampered ciphertext).
+TEST_CASE("PQC encrypt_packet_kem / decrypt_packet_kem roundtrip", "[e2e][pqc]") {
+    nocturne::check_sodium();
+
+    auto run_roundtrip = [](nocturne::pqc::KEMType kt, const char* label) {
+        INFO("KEM type: " << label);
+
+        auto kem = nocturne::pqc::KEMFactory{}.create(kt);
+        auto kp = kem->generate_keypair();
+        std::vector<uint8_t> rx_pk(kp.public_key.begin(), kp.public_key.end());
+        std::vector<uint8_t> rx_sk(kp.secret_key.begin(), kp.secret_key.end());
+
+        nocturne::Bytes plaintext = {'h','e','l','l','o','-','p','q','c'};
+        nocturne::Bytes aad       = {0xDE, 0xAD, 0xBE, 0xEF};
+
+        SECTION(std::string("happy path: ") + label) {
+            auto packet = encrypt_packet_kem(kt, rx_pk, plaintext, aad,
+                                             /*rotation_id=*/0,
+                                             /*signer=*/nullptr,
+                                             /*rdb=*/nullptr);
+            REQUIRE(!packet.empty());
+
+            auto decrypted = decrypt_packet_kem(rx_pk, rx_sk, packet);
+            REQUIRE(decrypted == plaintext);
+        }
+
+        SECTION(std::string("tampered ciphertext fails: ") + label) {
+            auto packet = encrypt_packet_kem(kt, rx_pk, plaintext, aad,
+                                             0, nullptr, nullptr);
+            // Flip a bit in the AEAD ciphertext region by mutating the
+            // last byte (which is always inside the AEAD tag).
+            packet.back() ^= 0x01;
+            REQUIRE_THROWS_AS(
+                decrypt_packet_kem(rx_pk, rx_sk, packet),
+                std::runtime_error);
+        }
+
+        SECTION(std::string("wrong receiver key fails: ") + label) {
+            auto packet = encrypt_packet_kem(kt, rx_pk, plaintext, aad,
+                                             0, nullptr, nullptr);
+            auto kp2 = kem->generate_keypair();
+            std::vector<uint8_t> wrong_sk(kp2.secret_key.begin(),
+                                          kp2.secret_key.end());
+            // Pair the original pk with a different sk — KEM decapsulate
+            // will produce a different shared secret, AEAD auth must fail.
+            REQUIRE_THROWS_AS(
+                decrypt_packet_kem(rx_pk, wrong_sk, packet),
+                std::runtime_error);
+        }
+    };
+
+    run_roundtrip(nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024, "hybrid");
+    run_roundtrip(nocturne::pqc::KEMType::PURE_MLKEM1024, "mlkem");
+}
+
+TEST_CASE("PQC roundtrip with Ed25519 signer", "[e2e][pqc]") {
+    nocturne::check_sodium();
+
+    auto kem_type = nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024;
+    auto kem = nocturne::pqc::KEMFactory{}.create(kem_type);
+    auto kp = kem->generate_keypair();
+    std::vector<uint8_t> rx_pk(kp.public_key.begin(), kp.public_key.end());
+    std::vector<uint8_t> rx_sk(kp.secret_key.begin(), kp.secret_key.end());
+
+    auto sender = nocturne::gen_ed25519();
+    {
+        std::ofstream f("test_pqc_signer_sk.bin", std::ios::binary);
+        f.write(reinterpret_cast<const char*>(sender.sk.data()), sender.sk.size());
+    }
+    FileHSM hsm("test_pqc_signer_sk.bin");
+
+    nocturne::Bytes plaintext = {0x01, 0x02, 0x03, 0x04};
+    nocturne::Bytes aad       = {0xCA, 0xFE};
+
+    auto packet = encrypt_packet_kem(kem_type, rx_pk, plaintext, aad,
+                                     /*rotation_id=*/0, &hsm, nullptr);
+
+    SECTION("signed packet verifies with correct signer pk") {
+        auto decrypted = decrypt_packet_kem(rx_pk, rx_sk, packet, sender.pk,
+                                            nullptr, std::nullopt);
+        REQUIRE(decrypted == plaintext);
+    }
+
+    SECTION("signed packet rejected with wrong signer pk") {
+        auto wrong = nocturne::gen_ed25519();
+        REQUIRE_THROWS_AS(
+            decrypt_packet_kem(rx_pk, rx_sk, packet, wrong.pk,
+                               nullptr, std::nullopt),
+            std::runtime_error);
+    }
+
+    std::filesystem::remove("test_pqc_signer_sk.bin");
+}
+#endif // NOCTURNE_ENABLE_PQC
+
 TEST_CASE("Error handling", "[errors]") {
     check_sodium();
     
