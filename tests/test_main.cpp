@@ -364,6 +364,80 @@ TEST_CASE("PQC roundtrip with Ed25519 signer", "[e2e][pqc]") {
 }
 #endif // NOCTURNE_ENABLE_PQC
 
+// Local include — the hsm headers live outside the nocturne-kx.cpp graph.
+#include "../src/hsm/file_hsm.hpp"
+#include "../src/security/key_rotation.hpp"
+
+TEST_CASE("FileHSM generate_key drives KeyRotationManager", "[hsm]") {
+    nocturne::check_sodium();
+    namespace fs = std::filesystem;
+
+    auto base = fs::temp_directory_path() / "nocturne_filehsm_rotate_test";
+    fs::remove_all(base);
+    fs::create_directories(base);
+
+    auto hsm = std::make_shared<nocturne::hsm::FileHSM>(base);
+    REQUIRE(hsm->is_healthy());
+
+    SECTION("generate_key produces a usable signing key") {
+        nocturne::hsm::KeyPolicy policy;
+        policy.sensitive = true;
+        policy.extractable = false;
+
+        auto md = hsm->generate_key("test-key", "Ed25519", policy);
+        REQUIRE(md.label == "test-key");
+        REQUIRE(md.algorithm == "Ed25519");
+        REQUIRE(md.is_active);
+
+        auto pk_opt = hsm->get_public_key();
+        REQUIRE(pk_opt.has_value());
+
+        // The key the HSM uses to sign must verify against the pk it
+        // just reported — the smoke test that proves generate_key
+        // actually wired the cache.
+        const std::string msg = "rotation test";
+        auto sig = hsm->sign(reinterpret_cast<const uint8_t*>(msg.data()),
+                             msg.size());
+        REQUIRE(crypto_sign_verify_detached(
+                    sig.data(),
+                    reinterpret_cast<const uint8_t*>(msg.data()),
+                    msg.size(),
+                    pk_opt->data()) == 0);
+
+        // The key file should exist on disk.
+        REQUIRE(fs::exists(base / "test-key.ed25519.sk"));
+    }
+
+    SECTION("KeyRotationManager.generate_initial_key + rotate") {
+        nocturne::security::RotationPolicy rpol;
+        rpol.require_dual_approval = false;
+        nocturne::security::KeyRotationManager krm(hsm, rpol);
+
+        auto k1 = krm.generate_initial_key("rotation-key");
+        // generate_initial_key returns a 32-byte key id (random); the
+        // HSM-side label is "rotation-key", with a key file on disk.
+        REQUIRE(fs::exists(base / "rotation-key.ed25519.sk"));
+
+        // After rotation the HSM is signing with the new key. The
+        // *previous* key file should still be present (FileHSM keeps
+        // labels around so KRM's archive logic can find them); the new
+        // label is "<old>_v<N>".
+        auto k2 = krm.rotate(nocturne::security::RotationTrigger::TIME_BASED,
+                             "test-operator");
+        REQUIRE(k2.has_value());
+        // Some entry with prefix "rotation-key_v" must exist.
+        bool found_rotated = false;
+        for (const auto& entry : fs::directory_iterator(base)) {
+            auto name = entry.path().filename().string();
+            if (name.rfind("rotation-key_v", 0) == 0) { found_rotated = true; break; }
+        }
+        REQUIRE(found_rotated);
+        REQUIRE(k1 != *k2);
+    }
+
+    fs::remove_all(base);
+}
+
 TEST_CASE("Audit log verify_chain", "[audit]") {
     nocturne::check_sodium();
     namespace fs = std::filesystem;

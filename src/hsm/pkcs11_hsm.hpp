@@ -77,6 +77,23 @@ typedef void* CK_VOID_PTR;
 #define CKM_ECDSA_SHA256 0x00001042UL
 // EdDSA (Ed25519/Ed448) — PKCS#11 v3.0+
 #define CKM_EDDSA 0x00001057UL
+// Edwards-curve key-pair generation (PKCS#11 v3.0+).
+#define CKM_EC_EDWARDS_KEY_PAIR_GEN 0x00001055UL
+// CKA_EC_POINT contains the encoded curve point (DER OctetString wrapping
+// the raw 32-byte Ed25519 public key).
+#ifndef CKA_EC_POINT
+#define CKA_EC_POINT 0x00000181UL
+#endif
+// CKA_PRIVATE marks the SK as a token-resident, private object.
+#ifndef CKA_PRIVATE
+#define CKA_PRIVATE 0x00000002UL
+#endif
+#ifndef CKA_SENSITIVE
+#define CKA_SENSITIVE 0x00000103UL
+#endif
+#ifndef CKA_EXTRACTABLE
+#define CKA_EXTRACTABLE 0x00000162UL
+#endif
 
 // PKCS#11 flags
 #define CKF_RW_SESSION 0x00000002UL
@@ -638,6 +655,155 @@ public:
 
     bool is_healthy() override {
         return initialized_ && !session_pool_.available_.empty();
+    }
+
+    // PKCS#11 Ed25519 key generation. Uses CKM_EC_EDWARDS_KEY_PAIR_GEN
+    // (PKCS#11 v3.0+) with CKA_EC_PARAMS = id-Ed25519 OID DER. The new
+    // public key is read back via C_GetAttributeValue(CKA_EC_POINT),
+    // which returns the 32-byte point wrapped in a DER OctetString
+    // (0x04 0x20 ...32 bytes...).
+    //
+    // After generation, the key handles populate key_cache_ and
+    // key_label_ so subsequent sign() / get_public_key() calls use the
+    // freshly generated key — the same swap-active-key behavior the
+    // file_hsm.hpp FileHSM exposes, and the behavior KeyRotationManager
+    // relies on (generate, then immediately use).
+    KeyMetadata generate_key(const std::string& label,
+                             const std::string& algorithm,
+                             const KeyPolicy& policy) override {
+        if (algorithm != "Ed25519") {
+            throw HSMOperationNotSupportedError(
+                "PKCS11HSM only supports Ed25519, got " + algorithm);
+        }
+        if (!initialized_) {
+            throw HSMNotInitializedError();
+        }
+
+        // DER encoding of id-Ed25519 (RFC 8410 §3): 1.3.101.112
+        // → 06 03 2B 65 70 (OID tag 06, length 3, bytes 2B 65 70).
+        static const CK_BYTE kEd25519OidDer[] = {0x06, 0x03, 0x2B, 0x65, 0x70};
+
+        // Public-key template
+        CK_BBOOL ck_true = CK_TRUE;
+        CK_BBOOL ck_false = CK_FALSE;
+        CK_ULONG key_class_pub = CKO_PUBLIC_KEY;
+        CK_ULONG key_class_priv = CKO_PRIVATE_KEY;
+        CK_ULONG key_type = CKK_EC_EDWARDS;
+
+        std::vector<CK_BYTE> label_bytes(label.begin(), label.end());
+        // PKCS#11 uses CKA_ID as the key id; we set it to the label too
+        // so token browsers like pkcs11-tool can find it predictably.
+        std::vector<CK_BYTE> id_bytes = label_bytes;
+
+        CK_ATTRIBUTE pub_template[] = {
+            {CKA_CLASS,      &key_class_pub,        sizeof(key_class_pub)},
+            {CKA_KEY_TYPE,   &key_type,             sizeof(key_type)},
+            {CKA_TOKEN,      &ck_true,              sizeof(ck_true)},
+            {CKA_LABEL,      label_bytes.data(),    static_cast<CK_ULONG>(label_bytes.size())},
+            {CKA_ID,         id_bytes.data(),       static_cast<CK_ULONG>(id_bytes.size())},
+            {CKA_EC_PARAMS,  const_cast<CK_BYTE*>(kEd25519OidDer), sizeof(kEd25519OidDer)},
+            {CKA_VERIFY,     &ck_true,              sizeof(ck_true)},
+        };
+
+        // Private-key template. extractable=false / sensitive=true keep
+        // the SK on the token; policy.allow_export flips CKA_EXTRACTABLE
+        // back on for backup workflows. Both default to the secure
+        // posture if not specified.
+        CK_BBOOL ck_sensitive   = policy.sensitive ? CK_TRUE : CK_FALSE;
+        CK_BBOOL ck_extractable = policy.extractable ? CK_TRUE : CK_FALSE;
+
+        CK_ATTRIBUTE priv_template[] = {
+            {CKA_CLASS,      &key_class_priv,       sizeof(key_class_priv)},
+            {CKA_KEY_TYPE,   &key_type,             sizeof(key_type)},
+            {CKA_TOKEN,      &ck_true,              sizeof(ck_true)},
+            {CKA_PRIVATE,    &ck_true,              sizeof(ck_true)},
+            {CKA_LABEL,      label_bytes.data(),    static_cast<CK_ULONG>(label_bytes.size())},
+            {CKA_ID,         id_bytes.data(),       static_cast<CK_ULONG>(id_bytes.size())},
+            {CKA_SIGN,       &ck_true,              sizeof(ck_true)},
+            {CKA_SENSITIVE,  &ck_sensitive,         sizeof(ck_sensitive)},
+            {CKA_EXTRACTABLE,&ck_extractable,       sizeof(ck_extractable)},
+        };
+        (void)ck_false;  // reserved for future template variants
+
+        CK_MECHANISM mech = {CKM_EC_EDWARDS_KEY_PAIR_GEN, nullptr, 0};
+
+        CK_SESSION_HANDLE session = acquire_session();
+        CK_OBJECT_HANDLE pub_handle = 0, priv_handle = 0;
+
+        try {
+            CK_RV rv = functions_->C_GenerateKeyPair(
+                session, &mech,
+                pub_template,  sizeof(pub_template)  / sizeof(pub_template[0]),
+                priv_template, sizeof(priv_template) / sizeof(priv_template[0]),
+                &pub_handle, &priv_handle);
+            if (rv != CKR_OK) {
+                throw PKCS11Error("C_GenerateKeyPair", rv);
+            }
+
+            // Read the encoded EC point so we can cache the 32-byte
+            // public key. PKCS#11 returns it as a DER OctetString
+            // wrapping the raw curve point.
+            CK_ATTRIBUTE point_query = {CKA_EC_POINT, nullptr, 0};
+            rv = functions_->C_GetAttributeValue(session, pub_handle, &point_query, 1);
+            if (rv != CKR_OK || point_query.ulValueLen == 0) {
+                throw PKCS11Error("C_GetAttributeValue(CKA_EC_POINT len)", rv);
+            }
+            std::vector<CK_BYTE> point_der(point_query.ulValueLen);
+            point_query.pValue = point_der.data();
+            rv = functions_->C_GetAttributeValue(session, pub_handle, &point_query, 1);
+            if (rv != CKR_OK) {
+                throw PKCS11Error("C_GetAttributeValue(CKA_EC_POINT)", rv);
+            }
+
+            // Strip the DER OctetString wrapper: 0x04 <len> <raw bytes>.
+            // For Ed25519 the raw point is exactly 32 bytes.
+            std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> pk_raw{};
+            if (point_der.size() == crypto_sign_PUBLICKEYBYTES) {
+                // Some HSMs return the raw point without DER wrapping.
+                std::memcpy(pk_raw.data(), point_der.data(), pk_raw.size());
+            } else if (point_der.size() >= 2 + crypto_sign_PUBLICKEYBYTES &&
+                       point_der[0] == 0x04 &&
+                       point_der[1] == crypto_sign_PUBLICKEYBYTES) {
+                std::memcpy(pk_raw.data(),
+                            point_der.data() + 2,
+                            crypto_sign_PUBLICKEYBYTES);
+            } else {
+                throw HSMError(
+                    "PKCS11HSM: unexpected CKA_EC_POINT encoding (len=" +
+                    std::to_string(point_der.size()) + ")");
+            }
+
+            // Activate the new key in the cache so subsequent sign()
+            // and get_public_key() use it. Old handles are not destroyed
+            // — KeyRotationManager keeps them around for archived
+            // decrypt operations.
+            {
+                std::lock_guard<std::mutex> ck(key_cache_.mutex);
+                key_cache_.public_key_handle  = pub_handle;
+                key_cache_.private_key_handle = priv_handle;
+                key_cache_.public_key         = pk_raw;
+                key_cache_.valid              = true;
+            }
+            key_label_ = label;
+
+            release_session(session);
+
+            KeyMetadata md;
+            md.label = label;
+            md.key_id = label;  // CKA_ID is the label
+            md.algorithm = algorithm;
+            md.policy = policy;
+            md.created_at = std::chrono::system_clock::now();
+            if (policy.max_lifetime.count() > 0) {
+                md.expires_at = md.created_at + policy.max_lifetime;
+            }
+            md.is_active = true;
+            return md;
+
+        } catch (...) {
+            release_session(session);
+            throw;
+        }
     }
 
     HSMStatus get_status() const override {

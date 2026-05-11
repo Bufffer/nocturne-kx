@@ -76,6 +76,15 @@ jobs:
       run: |
         ./nocturne-tests "[audit]"
 
+    # FileHSM + KeyRotationManager: regression net for HSMInterface
+    # implementations. generate_key() previously threw "not implemented",
+    # so any consumer relying on it (KeyRotationManager) would crash at
+    # runtime — these tests prove the wiring stays sound.
+    - name: HSM generate_key + KeyRotationManager (must pass)
+      working-directory: ${{github.workspace}}/build
+      run: |
+        ./nocturne-tests "[hsm]"
+
   build-debug:
     runs-on: ubuntu-latest
     strategy:
