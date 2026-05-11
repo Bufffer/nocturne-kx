@@ -51,25 +51,26 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             // Expected for malformed input
         }
         
-        // Test key derivation with random data
+        // Test key derivation with random data — exercise the code paths
+        // for memory safety, not the mathematical key-agreement invariant.
+        // tx_key == rx_key only holds when (pk1, sk) is a legitimate
+        // X25519 keypair; with arbitrary fuzz bytes that's almost never
+        // true, so asserting equality was incorrect (and was the crash
+        // surfaced by libFuzzer input 0x0a, 101× 0xff).
         if (size >= crypto_kx_PUBLICKEYBYTES * 2 + crypto_kx_SECRETKEYBYTES) {
             std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> pk1{}, pk2{};
             std::array<uint8_t, crypto_kx_SECRETKEYBYTES> sk{};
-            
+
             std::memcpy(pk1.data(), data, crypto_kx_PUBLICKEYBYTES);
             std::memcpy(pk2.data(), data + crypto_kx_PUBLICKEYBYTES, crypto_kx_PUBLICKEYBYTES);
             std::memcpy(sk.data(), data + crypto_kx_PUBLICKEYBYTES * 2, crypto_kx_SECRETKEYBYTES);
-            
+
             try {
-                auto tx_key = derive_tx_key_client(pk1, sk, pk2);
-                auto rx_key = derive_rx_key_server(pk1, pk2, sk);
-                
-                // Keys should match
-                if (tx_key != rx_key) {
-                    __builtin_trap();
-                }
+                volatile auto tx_key = derive_tx_key_client(pk1, sk, pk2);
+                volatile auto rx_key = derive_rx_key_server(pk1, pk2, sk);
+                (void)tx_key; (void)rx_key;
             } catch (const std::runtime_error&) {
-                // Expected for invalid keys
+                // Expected for inputs that don't form a valid DH operation.
             }
         }
         
