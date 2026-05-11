@@ -7,8 +7,8 @@ C++23 cryptographic communication toolkit. libsodium + optional liboqs (ML-KEM-1
 - `src/handshake.hpp` — SIGMA 3-msg, Ed25519 ID + X25519 ephemeral, BLAKE2b transcript, `TrustStore`
 - `src/double_ratchet.hpp` — header-only DR (DH ratchet, chains, skipped keys cap=128, deterministic nonce, MAX_GAP=10000)
 - `src/transport.hpp` — Frame protocol (NEGOTIATE/DATA/ACK/NAK/CLOSE) + `MemoryTransport` loopback
+- `src/tcp_tls_transport.hpp` — `TlsAcceptor` + `TcpTlsTransport` (OpenSSL, TLS 1.3 only, optional mTLS, 4B BE length-prefixed framing)
 - `src/hsm/{hsm_interface,pkcs11_hsm,hsm_errors}.hpp` — production HSM hierarchy
-- `src/pkcs11_wrapper.{hpp,cpp}` — legacy stub HSM (to be removed in P3)
 - `src/security/{audit_logger,key_rotation,siem_connector}.hpp` — hash-chained signed audit, dual-control rotation, SIEM formatters
 - `src/pqc/pqc_config.hpp`, `src/pqc/kem/{kem_interface,kem_factory,mlkem_wrapper,hybrid_kem}` — ML-KEM-1024 + X25519 hybrid KEM (NIST SP 800-56Cr2 combiner)
 - `src/core/side_channel.{hpp,cpp}` — sodium_memcmp/memzero, 100-500µs random delay, clflush, branchless ct_select
@@ -47,6 +47,5 @@ cd build && ctest --output-on-failure
 
 ## Gotchas
 - Two `HSMInterface` definitions exist (inline in `nocturne-kx.cpp` and `nocturne::hsm::HSMInterface` in `src/hsm/`). Don't conflate.
-- Two `PKCS11HSM` classes too. CLI uses the inline one — wiring to production class is P1#4.
-- `tests/pqc/CMakeLists.txt` has hardcoded Windows paths from a different developer's machine.
-- `CMakeLists_new.txt` ≠ `CMakeLists.txt` — Dockerfile copies the former over the latter at build time.
+- Two `PKCS11HSM` classes too — the inline one in `nocturne-kx.cpp` is now a thin adapter that delegates to the production `nocturne::hsm::PKCS11HSM` via env vars (P1#4, commit `864d041`).
+- `CMakeLists_new.txt` ≠ `CMakeLists.txt` — Dockerfile copies the former over the latter at build time. P3#9 will merge them.

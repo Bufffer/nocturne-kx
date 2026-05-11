@@ -134,18 +134,14 @@ set_target_properties(nocturne-protocol PROPERTIES LINKER_LANGUAGE CXX)
 # )
 
 # HSM library - PKCS#11, TPM, FileHSM
-add_library(nocturne-hsm
-    src/pkcs11_wrapper.cpp
-    src/pkcs11_wrapper.hpp
-    # src/hsm/hsm_interface.hpp  # To be extracted
-    # src/hsm/file_hsm.cpp  # To be extracted
-    # src/hsm/pkcs11_hsm.cpp  # NEW - production PKCS#11
-    # src/hsm/tpm_hsm.cpp  # NEW - TPM 2.0 integration
-)
-target_include_directories(nocturne-hsm PUBLIC
+# Currently header-only (src/hsm/hsm_interface.hpp, src/hsm/pkcs11_hsm.hpp).
+# The legacy src/pkcs11_wrapper.{cpp,hpp} were removed in P3 #8; once
+# src/hsm/*.cpp implementations land, flip this back to a regular library.
+add_library(nocturne-hsm INTERFACE)
+target_include_directories(nocturne-hsm INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-target_link_libraries(nocturne-hsm PUBLIC
+target_link_libraries(nocturne-hsm INTERFACE
     nocturne-core
     ${CMAKE_DL_LIBS}  # For dlopen (PKCS#11 loading)
 )

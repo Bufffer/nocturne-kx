@@ -139,7 +139,6 @@ jobs:
         clang-tidy-15 \
           ../nocturne-kx.cpp \
           ../src/core/side_channel.cpp \
-          ../src/pkcs11_wrapper.cpp \
           -p . \
           --config='' \
           2>&1 | tee ../clang-tidy.log || true

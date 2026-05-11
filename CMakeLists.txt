@@ -155,7 +155,6 @@ set(NOCTURNE_CORE_SOURCES
     src/double_ratchet.hpp
     src/handshake.hpp
     src/transport.hpp
-    src/pkcs11_wrapper.cpp
     src/core/side_channel.cpp
     src/pqc/kem/kem_interface.cpp
     src/pqc/kem/kem_factory.cpp
