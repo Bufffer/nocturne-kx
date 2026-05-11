@@ -580,7 +580,193 @@ namespace audit_log {
             std::lock_guard<std::mutex> lk(mu_);
             append_record_unlocked(sev, category, subject, message);
         }
+
+        // Expose canonical_bytes for verify_chain (same algorithm, no instance state).
+        static std::vector<uint8_t> canonical_bytes_public(const Hash32& prev,
+                                                            int64_t ts_ms,
+                                                            Severity sev,
+                                                            const std::string& cat,
+                                                            const std::string& sub,
+                                                            const std::string& msg) {
+            return canonical_bytes(prev, ts_ms, sev, cat, sub, msg);
+        }
     };
+
+    // ------------------------------------------------------------------
+    // Verify chain — pairs with AuditLogger's emit format.
+    //
+    // The enterprise nocturne::security::AuditLogger has its own
+    // verify_chain (P2.7, commit beb946c), but its canonical encoding is
+    // different (includes seq, action, object, result; ISO-8601 timestamp
+    // in JSON). The CLI uses *this* logger when --audit-log is passed, so
+    // we need a verifier that matches the CLI's wire format.
+    //
+    // Returns a VerifyChainResult mirroring the enterprise one in shape
+    // so callers can be uniform.
+    // ------------------------------------------------------------------
+    struct VerifyChainResult {
+        bool ok = false;
+        size_t records_checked = 0;
+        std::optional<size_t> first_failure_line; // 1-based
+        std::vector<std::string> errors;
+        static constexpr size_t MAX_ERRORS = 32;
+    };
+
+    inline Severity sev_from_str(const std::string& s) {
+        if (s == "INFO") return Severity::INFO;
+        if (s == "WARN") return Severity::WARN;
+        if (s == "ERROR") return Severity::ERROR;
+        return Severity::SECURITY;
+    }
+
+    inline bool hex_decode_fixed(const std::string& hex, uint8_t* out, size_t out_len) {
+        if (hex.size() != out_len * 2) return false;
+        auto nyb = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+            if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+            return -1;
+        };
+        for (size_t i = 0; i < out_len; ++i) {
+            int hi = nyb(hex[2*i]);
+            int lo = nyb(hex[2*i + 1]);
+            if (hi < 0 || lo < 0) return false;
+            out[i] = static_cast<uint8_t>((hi << 4) | lo);
+        }
+        return true;
+    }
+
+    // Minimal JSON field extractor matched to the AuditLogger emitter.
+    // The emitter only escapes '"' (json_escape), and string values
+    // cannot contain newlines (records are framed line-by-line), so the
+    // grammar we need to parse is narrow:
+    //   "<key>":"<value-with-only-\"-escaped>"   or
+    //   "<key>":<integer>
+    // Returns false if the key isn't found or the value is malformed.
+    inline bool json_extract_string(const std::string& line, const std::string& key, std::string& out) {
+        std::string needle = "\"" + key + "\":\"";
+        auto p = line.find(needle);
+        if (p == std::string::npos) return false;
+        size_t i = p + needle.size();
+        out.clear();
+        while (i < line.size()) {
+            char c = line[i];
+            if (c == '\\' && i + 1 < line.size() && line[i+1] == '"') {
+                out.push_back('"');
+                i += 2;
+                continue;
+            }
+            if (c == '"') return true;
+            out.push_back(c);
+            ++i;
+        }
+        return false;
+    }
+    inline bool json_extract_int64(const std::string& line, const std::string& key, int64_t& out) {
+        std::string needle = "\"" + key + "\":";
+        auto p = line.find(needle);
+        if (p == std::string::npos) return false;
+        size_t i = p + needle.size();
+        if (i >= line.size() || line[i] == '"') return false; // not a number value
+        size_t start = i;
+        if (line[i] == '-' || line[i] == '+') ++i;
+        bool any = false;
+        while (i < line.size() && line[i] >= '0' && line[i] <= '9') { ++i; any = true; }
+        if (!any) return false;
+        try {
+            out = std::stoll(line.substr(start, i - start));
+        } catch (...) {
+            return false;
+        }
+        return true;
+    }
+
+    inline VerifyChainResult verify_chain(
+        const std::filesystem::path& log_path,
+        const std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>>& expected_signer_pk = std::nullopt)
+    {
+        VerifyChainResult r;
+        std::ifstream f(log_path);
+        if (!f) {
+            r.errors.push_back("cannot open " + log_path.string());
+            return r;
+        }
+        auto push_err = [&](size_t line_no, const std::string& msg) {
+            if (!r.first_failure_line) r.first_failure_line = line_no;
+            if (r.errors.size() < VerifyChainResult::MAX_ERRORS) {
+                r.errors.push_back("line " + std::to_string(line_no) + ": " + msg);
+            }
+        };
+
+        Hash32 expected_prev{};
+        bool first = true;
+        std::string line;
+        size_t line_no = 0;
+        while (std::getline(f, line)) {
+            ++line_no;
+            if (line.empty()) continue;
+
+            int64_t ts_ms = 0;
+            std::string sev_s, cat, sub, msg, prev_hex, hash_hex, sig_hex, pub_hex;
+            if (!json_extract_int64(line, "ts", ts_ms)) { push_err(line_no, "missing ts"); continue; }
+            if (!json_extract_string(line, "sev", sev_s)) { push_err(line_no, "missing sev"); continue; }
+            if (!json_extract_string(line, "cat", cat)) { push_err(line_no, "missing cat"); continue; }
+            if (!json_extract_string(line, "sub", sub)) { push_err(line_no, "missing sub"); continue; }
+            if (!json_extract_string(line, "msg", msg)) { push_err(line_no, "missing msg"); continue; }
+            if (!json_extract_string(line, "prev", prev_hex)) { push_err(line_no, "missing prev"); continue; }
+            if (!json_extract_string(line, "hash", hash_hex)) { push_err(line_no, "missing hash"); continue; }
+            (void)json_extract_string(line, "sig", sig_hex); // optional
+            (void)json_extract_string(line, "pub", pub_hex); // optional
+
+            Hash32 prev{}, hash{};
+            if (!hex_decode_fixed(prev_hex, prev.data(), prev.size())) { push_err(line_no, "bad prev hex"); continue; }
+            if (!hex_decode_fixed(hash_hex, hash.data(), hash.size())) { push_err(line_no, "bad hash hex"); continue; }
+
+            // Chain linkage
+            if (first) {
+                Hash32 zero{};
+                if (prev != zero) push_err(line_no, "first record prev != zero");
+                first = false;
+            } else if (prev != expected_prev) {
+                push_err(line_no, "prev does not match previous record hash");
+            }
+
+            // Recompute hash and compare
+            auto canon = AuditLogger::canonical_bytes_public(prev, ts_ms, sev_from_str(sev_s), cat, sub, msg);
+            Hash32 recomputed = blake2b_32(canon);
+            if (recomputed != hash) {
+                push_err(line_no, "hash mismatch (record tampered)");
+            }
+
+            // Signature verification (if present and pk available)
+            if (!sig_hex.empty() && !pub_hex.empty()) {
+                std::array<uint8_t, crypto_sign_BYTES> sig{};
+                std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> pk{};
+                if (!hex_decode_fixed(sig_hex, sig.data(), sig.size())) {
+                    push_err(line_no, "bad sig hex");
+                } else if (!hex_decode_fixed(pub_hex, pk.data(), pk.size())) {
+                    push_err(line_no, "bad pub hex");
+                } else {
+                    // Ed25519 verify of sig over hash bytes
+                    if (crypto_sign_verify_detached(sig.data(), hash.data(), hash.size(), pk.data()) != 0) {
+                        push_err(line_no, "signature verification failed");
+                    }
+                    // If an expected signer is required, enforce pin
+                    if (expected_signer_pk && pk != *expected_signer_pk) {
+                        push_err(line_no, "signer pk does not match expected");
+                    }
+                }
+            } else if (expected_signer_pk) {
+                push_err(line_no, "expected-signer set but record is unsigned");
+            }
+
+            expected_prev = hash;
+            ++r.records_checked;
+        }
+
+        r.ok = r.errors.empty();
+        return r;
+    }
 
     static std::unique_ptr<AuditLogger> global_logger = nullptr;
 
@@ -2266,6 +2452,12 @@ Subcommands:
   audit-log
       -> Displays a summary of security features and recommendations.
 
+  audit-verify <log-path> [--expect-signer <pk-file>]
+      -> Walks the JSONL audit log written by --audit-log, recomputes the
+         BLAKE2b hash chain, and (if records are signed) verifies the
+         per-record Ed25519 signatures. Exits 0 on full integrity,
+         non-zero with line numbers + reasons on the first failure.
+
   rate-limit-status <identifier>
       -> Shows rate limiting status for a specific identifier.
 
@@ -2860,6 +3052,45 @@ int main(int argc, char** argv) {
             std::cout << "  6. Conduct penetration testing\n";
             std::cout << "  7. Follow secure development lifecycle\n";
             
+            return 0;
+        }
+
+        if (cmd == "audit-verify") {
+            if (argc < 3) { usage(); return 1; }
+            std::filesystem::path log_path = argv[2];
+            std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> expect_pk;
+            for (int i = 3; i < argc; ++i) {
+                std::string a = argv[i];
+                if (a == "--expect-signer" && i + 1 < argc) {
+                    std::filesystem::path pkp = argv[++i];
+                    std::ifstream kf(pkp, std::ios::binary);
+                    if (!kf) { std::cerr << "ERR: cannot open " << pkp << "\n"; return 2; }
+                    std::vector<uint8_t> kb((std::istreambuf_iterator<char>(kf)), std::istreambuf_iterator<char>());
+                    if (kb.size() != crypto_sign_PUBLICKEYBYTES) {
+                        std::cerr << "ERR: --expect-signer pk has wrong size (" << kb.size()
+                                  << ", expected " << crypto_sign_PUBLICKEYBYTES << ")\n";
+                        return 2;
+                    }
+                    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> pk{};
+                    std::memcpy(pk.data(), kb.data(), kb.size());
+                    expect_pk = pk;
+                } else {
+                    std::cerr << "ERR: unknown audit-verify arg: " << a << "\n";
+                    return 1;
+                }
+            }
+            auto res = audit_log::verify_chain(log_path, expect_pk);
+            std::cout << "Audit chain verification\n";
+            std::cout << "  file:             " << log_path << "\n";
+            std::cout << "  records checked:  " << res.records_checked << "\n";
+            std::cout << "  ok:               " << (res.ok ? "yes" : "NO") << "\n";
+            if (!res.ok) {
+                if (res.first_failure_line)
+                    std::cout << "  first failure:    line " << *res.first_failure_line << "\n";
+                std::cout << "  errors:\n";
+                for (const auto& e : res.errors) std::cout << "    " << e << "\n";
+                return 3;
+            }
             return 0;
         }
 

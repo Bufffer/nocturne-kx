@@ -68,6 +68,14 @@ jobs:
       run: |
         ./nocturne-tests "[pqc]"
 
+    # Audit log integrity is exercised the same way: a regression in the
+    # canonical-bytes encoding or the JSON parser would only surface end-
+    # to-end, so the chain-verify suite runs as a non-swallowed step.
+    - name: Audit log verify_chain (must pass)
+      working-directory: ${{github.workspace}}/build
+      run: |
+        ./nocturne-tests "[audit]"
+
   build-debug:
     runs-on: ubuntu-latest
     strategy:

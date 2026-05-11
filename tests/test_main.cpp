@@ -364,6 +364,93 @@ TEST_CASE("PQC roundtrip with Ed25519 signer", "[e2e][pqc]") {
 }
 #endif // NOCTURNE_ENABLE_PQC
 
+TEST_CASE("Audit log verify_chain", "[audit]") {
+    nocturne::check_sodium();
+    namespace fs = std::filesystem;
+
+    // Use a per-test temp dir so the .chain sidecar from a previous test
+    // doesn't poison the new logger's start-of-chain state.
+    auto base = fs::temp_directory_path() / "nocturne_audit_verify_test";
+    fs::remove_all(base);
+    fs::create_directories(base);
+    auto log_path = base / "audit.jsonl";
+    auto signer_sk_path = base / "signer_sk.bin";
+
+    // Generate an Ed25519 signer and persist the secret key (raw 64B —
+    // AuditLogger expects unencrypted raw bytes, matching the inline
+    // logger's load path).
+    auto signer = nocturne::gen_ed25519();
+    {
+        std::ofstream f(signer_sk_path, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(signer.sk.data()), signer.sk.size());
+    }
+
+    SECTION("unsigned chain verifies after multiple records") {
+        {
+            audit_log::AuditLogger lg(log_path, std::nullopt, std::nullopt, std::nullopt);
+            lg.log(audit_log::Severity::INFO, "CAT", "SUB", "first record");
+            lg.log(audit_log::Severity::WARN, "CAT", "SUB", "second");
+            lg.log(audit_log::Severity::ERROR, "CAT", "SUB", "third with \"quote\"");
+        }
+        auto r = audit_log::verify_chain(log_path);
+        REQUIRE(r.ok);
+        REQUIRE(r.records_checked == 3);
+        REQUIRE(r.errors.empty());
+    }
+
+    SECTION("signed chain verifies with --expect-signer pinned") {
+        {
+            audit_log::AuditLogger lg(log_path, signer_sk_path, std::nullopt, std::nullopt);
+            lg.log(audit_log::Severity::SECURITY, "CRYPTO", "ENCRYPT", "ok");
+            lg.log(audit_log::Severity::SECURITY, "CRYPTO", "DECRYPT", "ok");
+        }
+        auto r = audit_log::verify_chain(log_path, signer.pk);
+        REQUIRE(r.ok);
+        REQUIRE(r.records_checked == 2);
+    }
+
+    SECTION("tampered record is detected") {
+        {
+            audit_log::AuditLogger lg(log_path, std::nullopt, std::nullopt, std::nullopt);
+            lg.log(audit_log::Severity::INFO, "CAT", "SUB", "alpha");
+            lg.log(audit_log::Severity::INFO, "CAT", "SUB", "beta");
+        }
+        // Tamper: rewrite the second line's message in-place. The file
+        // structure stays valid JSONL but the hash no longer matches.
+        std::vector<std::string> lines;
+        {
+            std::ifstream in(log_path);
+            std::string line;
+            while (std::getline(in, line)) lines.push_back(line);
+        }
+        REQUIRE(lines.size() == 2);
+        auto pos = lines[1].find("\"msg\":\"beta\"");
+        REQUIRE(pos != std::string::npos);
+        lines[1].replace(pos, std::string("\"msg\":\"beta\"").size(),
+                         "\"msg\":\"BETA\"");
+        {
+            std::ofstream out(log_path, std::ios::trunc);
+            for (auto& l : lines) out << l << '\n';
+        }
+        auto r = audit_log::verify_chain(log_path);
+        REQUIRE_FALSE(r.ok);
+        REQUIRE(r.first_failure_line.has_value());
+        REQUIRE(*r.first_failure_line == 2);
+    }
+
+    SECTION("wrong --expect-signer is rejected") {
+        {
+            audit_log::AuditLogger lg(log_path, signer_sk_path, std::nullopt, std::nullopt);
+            lg.log(audit_log::Severity::INFO, "CAT", "SUB", "signed");
+        }
+        auto wrong = nocturne::gen_ed25519();
+        auto r = audit_log::verify_chain(log_path, wrong.pk);
+        REQUIRE_FALSE(r.ok);
+    }
+
+    fs::remove_all(base);
+}
+
 TEST_CASE("Error handling", "[errors]") {
     check_sodium();
     
