@@ -264,6 +264,135 @@ TEST_CASE("End-to-end encryption/decryption", "[e2e]") {
 }
 
 #ifdef NOCTURNE_ENABLE_PQC
+
+// Regression net for the FLAG_HAS_PQC_SIG path landed in P4.2 + P4.3.
+// Exercises ML-DSA-87 and hybrid Ed25519+ML-DSA-87 across both the
+// classical X25519 encrypt path (encrypt_packet/decrypt_packet) and the
+// PQC KEM path (encrypt_packet_kem/decrypt_packet_kem) — that's where a
+// quiet wire-format regression would matter most.
+TEST_CASE("PQC signature roundtrip on encrypt_packet", "[pqc-sig]") {
+    nocturne::check_sodium();
+
+    auto receiver = nocturne::gen_x25519();
+    nocturne::Bytes pt  = {'p','q','-','s','i','g'};
+    nocturne::Bytes aad = {0xAA, 0xBB};
+
+    auto run = [&](nocturne::pqc::SigType st, const char* label) {
+        INFO("sig type: " << label);
+        auto scheme = nocturne::pqc::SignatureFactory{}.create(st);
+        auto kp = scheme->generate_keypair();
+        nocturne::PqcSignerConfig signer{st, kp.secret_key};
+
+        auto packet = encrypt_packet(receiver.pk, pt, aad,
+                                     /*rotation_id=*/0,
+                                     /*use_ratchet=*/false,
+                                     /*signer=*/nullptr,
+                                     /*rdb=*/nullptr,
+                                     /*session_id=*/"",
+                                     &signer);
+        REQUIRE(!packet.empty());
+
+        SECTION(std::string(label) + " happy path") {
+            nocturne::PqcVerifierConfig verifier{st, kp.public_key};
+            auto decrypted = decrypt_packet(receiver.pk, receiver.sk, packet,
+                                            std::nullopt, nullptr, std::nullopt,
+                                            "", &verifier);
+            REQUIRE(decrypted == pt);
+        }
+
+        SECTION(std::string(label) + " wrong pk is rejected") {
+            auto kp2 = scheme->generate_keypair();
+            nocturne::PqcVerifierConfig verifier{st, kp2.public_key};
+            REQUIRE_THROWS_AS(
+                decrypt_packet(receiver.pk, receiver.sk, packet,
+                               std::nullopt, nullptr, std::nullopt,
+                               "", &verifier),
+                std::runtime_error);
+        }
+
+        SECTION(std::string(label) + " missing pqc-sig flag is rejected when verifier set") {
+            // Strip FLAG_HAS_PQC_SIG by re-encrypting without a signer.
+            auto bare = encrypt_packet(receiver.pk, pt, aad, 0, false,
+                                       nullptr, nullptr, "", nullptr);
+            nocturne::PqcVerifierConfig verifier{st, kp.public_key};
+            REQUIRE_THROWS_AS(
+                decrypt_packet(receiver.pk, receiver.sk, bare,
+                               std::nullopt, nullptr, std::nullopt,
+                               "", &verifier),
+                std::runtime_error);
+        }
+    };
+
+    run(nocturne::pqc::SigType::PURE_MLDSA87,           "ML-DSA-87");
+    run(nocturne::pqc::SigType::HYBRID_ED25519_MLDSA87, "Hybrid Ed25519+ML-DSA-87");
+}
+
+TEST_CASE("PQC signature roundtrip on encrypt_packet_kem (full hybrid)", "[pqc-sig]") {
+    nocturne::check_sodium();
+
+    // Receiver: hybrid X25519+ML-KEM-1024.
+    auto kem = nocturne::pqc::KEMFactory{}.create(
+        nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024);
+    auto rx = kem->generate_keypair();
+
+    // Signer: hybrid Ed25519+ML-DSA-87. This is the full
+    // PQ-resistant-on-both-sides configuration.
+    auto sig_type = nocturne::pqc::SigType::HYBRID_ED25519_MLDSA87;
+    auto scheme   = nocturne::pqc::SignatureFactory{}.create(sig_type);
+    auto sig_kp   = scheme->generate_keypair();
+    nocturne::PqcSignerConfig signer{sig_type, sig_kp.secret_key};
+
+    nocturne::Bytes pt = {0x01, 0x02, 0x03, 0x04};
+    auto packet = encrypt_packet_kem(
+        nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024,
+        std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
+        pt, /*aad=*/{}, /*rotation_id=*/0,
+        /*signer=*/nullptr, /*rdb=*/nullptr,
+        /*session_id=*/"", &signer);
+    REQUIRE(!packet.empty());
+
+    SECTION("hybrid KEM + hybrid sig verifies") {
+        nocturne::PqcVerifierConfig verifier{sig_type, sig_kp.public_key};
+        auto decrypted = decrypt_packet_kem(
+            std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
+            std::vector<uint8_t>(rx.secret_key.begin(), rx.secret_key.end()),
+            packet, std::nullopt, nullptr, std::nullopt, "", &verifier);
+        REQUIRE(decrypted == pt);
+    }
+
+    SECTION("type-mismatch verifier is rejected") {
+        // Sender signed hybrid, receiver expects pure ML-DSA-87 — must fail
+        // on the type guard before any cryptographic work runs.
+        auto wrong_scheme = nocturne::pqc::SignatureFactory{}.create(
+            nocturne::pqc::SigType::PURE_MLDSA87);
+        auto wrong_kp = wrong_scheme->generate_keypair();
+        nocturne::PqcVerifierConfig verifier{
+            nocturne::pqc::SigType::PURE_MLDSA87, wrong_kp.public_key};
+        REQUIRE_THROWS_AS(
+            decrypt_packet_kem(
+                std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
+                std::vector<uint8_t>(rx.secret_key.begin(), rx.secret_key.end()),
+                packet, std::nullopt, nullptr, std::nullopt, "", &verifier),
+            std::runtime_error);
+    }
+
+    SECTION("tampered pqc_sig byte breaks verification") {
+        // Hybrid sig wire layout is ed_sig(64) || mldsa_sig(4627), and the
+        // FLAG_HAS_SIG block isn't set in this test, so packet.back() is
+        // the last byte of the ML-DSA half. Flipping it must break the
+        // hybrid AND-verify.
+        auto bad = packet;
+        bad.back() ^= 0x01;
+        nocturne::PqcVerifierConfig verifier{sig_type, sig_kp.public_key};
+        REQUIRE_THROWS_AS(
+            decrypt_packet_kem(
+                std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
+                std::vector<uint8_t>(rx.secret_key.begin(), rx.secret_key.end()),
+                bad, std::nullopt, nullptr, std::nullopt, "", &verifier),
+            std::runtime_error);
+    }
+}
+
 // Regression net for commit 9b5c00b: a divergence between the version bound
 // into the KEM combined-secret on encrypt vs. decrypt produces a ciphertext
 // that round-trips through every CI compile/sanitizer check but fails AEAD

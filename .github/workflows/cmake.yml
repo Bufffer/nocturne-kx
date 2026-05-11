@@ -85,6 +85,16 @@ jobs:
       run: |
         ./nocturne-tests "[hsm]"
 
+    # P4: post-quantum signature path. ML-DSA-87 + hybrid Ed25519+ML-DSA-87
+    # roundtrip on both the classical X25519 encrypt path and the PQC KEM
+    # path. Same "must pass" posture as [pqc] / [audit] / [hsm] — a wire-
+    # format or canonical-bytes regression in FLAG_HAS_PQC_SIG would only
+    # surface end-to-end.
+    - name: PQ signature roundtrip (must pass)
+      working-directory: ${{github.workspace}}/build
+      run: |
+        ./nocturne-tests "[pqc-sig]"
+
   build-debug:
     runs-on: ubuntu-latest
     strategy:
