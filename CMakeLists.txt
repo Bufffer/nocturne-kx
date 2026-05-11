@@ -13,6 +13,14 @@ option(BUILD_TESTS "Build tests" OFF)
 option(BUILD_FUZZER "Build fuzzer" OFF)
 option(BUILD_LIBOQS "Build liboqs from source (auto-detected)" OFF)
 
+# Hardening / FIPS / LTO / sanitizers — all opt-in, used by the Dockerfile
+# to produce the hardened distroless build. Off by default so casual `cmake
+# -B build && cmake --build build` keeps working on developer machines.
+option(ENABLE_HARDENING "Enable security hardening flags (RELRO, CET, stack-protector, _FORTIFY_SOURCE)" OFF)
+option(ENABLE_FIPS "Enable FIPS 140-3 mode (defines NOCTURNE_FIPS_MODE)" OFF)
+option(ENABLE_LTO "Enable Link-Time Optimization" OFF)
+option(ENABLE_SANITIZERS "Enable AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+
 # ============================================================================
 # COMPILER FLAGS
 # ============================================================================
@@ -24,6 +32,41 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|i386")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse2")
     endif()
+endif()
+
+# Hardening flags (used by the production/Dockerfile build path).
+# MIL-STD-style hardening: full RELRO, NX stack, stack canaries, fortified
+# libc, deterministic integer overflow, plus Intel CET on x86_64.
+if(ENABLE_HARDENING)
+    set(NOCTURNE_HARDENING_FLAGS
+        -D_FORTIFY_SOURCE=2
+        -fstack-protector-strong
+        -fPIE
+        -Wl,-z,relro
+        -Wl,-z,now
+        -Wl,-z,noexecstack
+        -fno-delete-null-pointer-checks
+        -fwrapv
+    )
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        list(APPEND NOCTURNE_HARDENING_FLAGS -fcf-protection=full)
+    endif()
+    add_compile_options(${NOCTURNE_HARDENING_FLAGS})
+    add_link_options(-pie ${NOCTURNE_HARDENING_FLAGS})
+endif()
+
+if(ENABLE_FIPS)
+    add_compile_definitions(NOCTURNE_FIPS_MODE)
+endif()
+
+if(ENABLE_LTO AND NOT BUILD_FUZZER)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+
+if(ENABLE_SANITIZERS)
+    set(NOCTURNE_SANITIZER_FLAGS -fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_compile_options(${NOCTURNE_SANITIZER_FLAGS})
+    add_link_options(${NOCTURNE_SANITIZER_FLAGS})
 endif()
 
 # ============================================================================
@@ -463,7 +506,12 @@ message(STATUS "  Post-Quantum:    ${ENABLE_PQC}")
 if(ENABLE_PQC)
     message(STATUS "  liboqs:          ${LIBOQS_LIBRARY}")
 endif()
+message(STATUS "  TLS Transport:   ${ENABLE_TLS_TRANSPORT}")
 message(STATUS "  Tests:           ${BUILD_TESTS}")
 message(STATUS "  Fuzzer:          ${BUILD_FUZZER}")
+message(STATUS "  Hardening:       ${ENABLE_HARDENING}")
+message(STATUS "  FIPS mode:       ${ENABLE_FIPS}")
+message(STATUS "  LTO:             ${ENABLE_LTO}")
+message(STATUS "  Sanitizers:      ${ENABLE_SANITIZERS}")
 message(STATUS "")
 message(STATUS "═══════════════════════════════════════════════════════")

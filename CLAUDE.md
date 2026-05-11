@@ -14,10 +14,10 @@ C++23 cryptographic communication toolkit. libsodium + optional liboqs (ML-KEM-1
 - `src/core/side_channel.{hpp,cpp}` — sodium_memcmp/memzero, 100-500µs random delay, clflush, branchless ct_select
 
 ## Build
-- Active: `CMakeLists.txt` (v4.0.0, ENABLE_PQC=ON default, BUILD_TESTS=OFF, FetchContent liboqs 0.12.0 fallback)
-- Hardened (Dockerfile): `CMakeLists_new.txt` (FIPS, RELRO, CET, LTO, layered targets)
-- Tests: `-DBUILD_TESTS=ON`, gated on Catch2 v3
-- 4 GH workflows: cmake.yml (sanitizers + fuzz + cppcheck), comprehensive-test, security-{audit,scan}
+- Single canonical `CMakeLists.txt` (v4.0.0). Defaults: ENABLE_PQC=ON, ENABLE_TLS_TRANSPORT=ON, BUILD_TESTS=OFF. liboqs falls back to FetchContent 0.12.0 when not system-installed.
+- Hardened build (used by `Dockerfile`): opt in via `-DENABLE_HARDENING=ON -DENABLE_FIPS=ON -DENABLE_LTO=ON` (and optionally `-DENABLE_SANITIZERS=ON` for dev).
+- Tests: `-DBUILD_TESTS=ON`, gated on Catch2 v3.
+- 4 GH workflows: cmake.yml (sanitizers + fuzz + cppcheck), comprehensive-test, security-{audit,scan}.
 
 ## Conventions
 - All cryptographic ops via libsodium (or liboqs for PQC). Never hand-roll.
@@ -48,4 +48,3 @@ cd build && ctest --output-on-failure
 ## Gotchas
 - Two `HSMInterface` definitions exist (inline in `nocturne-kx.cpp` and `nocturne::hsm::HSMInterface` in `src/hsm/`). Don't conflate.
 - Two `PKCS11HSM` classes too — the inline one in `nocturne-kx.cpp` is now a thin adapter that delegates to the production `nocturne::hsm::PKCS11HSM` via env vars (P1#4, commit `864d041`).
-- `CMakeLists_new.txt` ≠ `CMakeLists.txt` — Dockerfile copies the former over the latter at build time. P3#9 will merge them.

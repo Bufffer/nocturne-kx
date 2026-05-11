@@ -29,15 +29,20 @@ WORKDIR /build
 
 # Copy source files
 COPY CMakeLists.txt ./
-COPY CMakeLists_new.txt ./CMakeLists.txt
 COPY src/ ./src/
 COPY nocturne-kx.cpp ./
 COPY .git/ ./.git/
 
-# Build with security hardening flags
+# Build with security hardening flags.
+# ENABLE_PQC and ENABLE_TLS_TRANSPORT are off here because Alpine doesn't
+# ship liboqs/OpenSSL packages compatible with the static, hardened build
+# Nocturne uses for distroless. Either feature can be enabled by adding the
+# corresponding -dev package and flipping the flag back on.
 RUN cmake -GNinja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_COMPILER=g++ \
+    -DENABLE_PQC=OFF \
+    -DENABLE_TLS_TRANSPORT=OFF \
     -DENABLE_HARDENING=ON \
     -DENABLE_FIPS=ON \
     -DENABLE_LTO=ON \
