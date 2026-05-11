@@ -47,15 +47,17 @@
 #include "src/pqc/sig/sig_factory.hpp"
 #include "src/pqc/pqc_config.hpp"
 
-// P5.0–P5.1 foundation: type-safe error path, byte-buffer views, flag
-// bitmask, and shared value types. The legacy definitions that used to
-// live in this file have moved into src/core/ and are pulled back in
-// here for the rest of nocturne-kx.cpp to consume unchanged.
+// P5.0–P5.2 foundation: type-safe error path, byte-buffer views, flag
+// bitmask, shared value types, and the Packet wire format. The legacy
+// definitions that used to live in this file have moved into src/core/
+// and src/protocol/, pulled back here for the rest of nocturne-kx.cpp
+// to consume unchanged.
 #include "src/core/error.hpp"
 #include "src/core/result.hpp"
 #include "src/core/byte_span.hpp"
 #include "src/core/flags.hpp"
 #include "src/core/types.hpp"
+#include "src/protocol/packet.hpp"
 #include <iomanip>
 
 // Platform-specific headers for memory protection
@@ -1210,205 +1212,13 @@ inline Ed25519KeyPair gen_ed25519() {
     return kp;
 }
 
-struct Packet {
-    uint8_t version{VERSION};
-    uint8_t flags{0};
-    uint32_t rotation_id{0};
-    std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> eph_pk{};
-    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES> nonce{};
-    uint64_t counter{0}; // monotonic per-sender
-    std::optional<std::array<uint8_t, crypto_kx_PUBLICKEYBYTES>> ratchet_pk; // optional
-    // PQC KEM fields — populated only when FLAG_HAS_PQC_KEM is set in flags.
-    // pqc_kem_type matches nocturne::pqc::KEMType (0=X25519, 1=Hybrid, 2=ML-KEM-1024).
-    uint8_t pqc_kem_type{0};
-    Bytes pqc_kem_ct;
-    Bytes aad;
-    Bytes ciphertext; // includes Poly1305 tag
-    std::optional<std::array<uint8_t, crypto_sign_BYTES>> signature;
-    // PQC SIG fields — populated only when FLAG_HAS_PQC_SIG is set. Variable-
-    // size to handle Ed25519 (64 B), ML-DSA-87 (4627 B), and hybrid (4691 B)
-    // through one wire path.
-    uint8_t pqc_sig_type{0};
-    Bytes pqc_sig;
-};
+// Packet, PqcSignerConfig, PqcVerifierConfig, the endian helpers, and
+// serialize/deserialize all moved to src/protocol/packet.{hpp,cpp} in
+// P5.2. The names remain reachable through namespace nocturne because
+// packet.hpp declares them there.
 
-// Caller-supplied parameters for the FLAG_HAS_PQC_SIG path. The HSM is
-// Ed25519-only (sign() returns std::array<uint8_t, crypto_sign_BYTES>), so
-// PQC signing currently bypasses the HSM interface and operates directly on
-// the in-memory secret key. A future iteration can extend HSMInterface with
-// a variable-size sign hook and slot PQC keys behind the same backend.
-struct PqcSignerConfig {
-    pqc::SigType type;
-    Bytes secret_key;  // raw scheme bytes; size enforced by SignatureFactory
-};
-
-struct PqcVerifierConfig {
-    pqc::SigType type;
-    Bytes public_key;
-};
-
-// portable LE helpers
-inline void write_u32_le(Bytes &out, uint32_t v) {
-    out.push_back(static_cast<uint8_t>(v & 0xff));
-    out.push_back(static_cast<uint8_t>((v >> 8) & 0xff));
-    out.push_back(static_cast<uint8_t>((v >> 16) & 0xff));
-    out.push_back(static_cast<uint8_t>((v >> 24) & 0xff));
-}
-inline uint32_t read_u32_le(const uint8_t* p) {
-    return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) | (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
-}
-inline void write_u64_le(Bytes &out, uint64_t v) {
-    for (int i=0;i<8;i++) out.push_back(static_cast<uint8_t>((v >> (8*i)) & 0xff));
-}
-inline uint64_t read_u64_le(const uint8_t* p) {
-    uint64_t v=0;
-    for (int i=0;i<8;i++) v |= (static_cast<uint64_t>(p[i]) << (8*i));
-    return v;
-}
-
-inline Bytes serialize(const Packet& p) {
-    Bytes out;
-    out.reserve(1+1+4 + p.eph_pk.size() + p.nonce.size() + 8 + (p.ratchet_pk?crypto_kx_PUBLICKEYBYTES:0) + 4 + 4 + p.aad.size() + p.ciphertext.size() + (p.signature?crypto_sign_BYTES:0));
-    out.push_back(p.version);
-    out.push_back(p.flags);
-    nocturne::write_u32_le(out, p.rotation_id);
-    out.insert(out.end(), p.eph_pk.begin(), p.eph_pk.end());
-    out.insert(out.end(), p.nonce.begin(), p.nonce.end());
-    nocturne::write_u64_le(out, p.counter);
-    if (p.flags & FLAG_HAS_RATCHET) {
-        if (!p.ratchet_pk) throw std::runtime_error("ratchet flag set but pk missing");
-        out.insert(out.end(), p.ratchet_pk->begin(), p.ratchet_pk->end());
-    }
-    if (p.flags & FLAG_HAS_PQC_KEM) {
-        if (p.pqc_kem_ct.empty()) throw std::runtime_error("pqc-kem flag set but ct missing");
-        if (p.pqc_kem_ct.size() > MAX_PQC_KEM_CT_SIZE) throw std::runtime_error("pqc kem ct too large");
-        out.push_back(p.pqc_kem_type);
-        nocturne::write_u32_le(out, static_cast<uint32_t>(p.pqc_kem_ct.size()));
-        out.insert(out.end(), p.pqc_kem_ct.begin(), p.pqc_kem_ct.end());
-    }
-    nocturne::write_u32_le(out, static_cast<uint32_t>(p.aad.size()));
-    nocturne::write_u32_le(out, static_cast<uint32_t>(p.ciphertext.size()));
-    if (!p.aad.empty()) out.insert(out.end(), p.aad.begin(), p.aad.end());
-    if (!p.ciphertext.empty()) out.insert(out.end(), p.ciphertext.begin(), p.ciphertext.end());
-    // PQC signature block before the classical signature: when both flags are
-    // set (currently not exercised but reserved), stripping the classical sig
-    // for canonical re-serialization still leaves the PQC sig in place.
-    if (p.flags & FLAG_HAS_PQC_SIG) {
-        if (p.pqc_sig.empty()) throw std::runtime_error("pqc-sig flag set but bytes missing");
-        if (p.pqc_sig.size() > MAX_PQC_SIG_SIZE) throw std::runtime_error("pqc sig too large");
-        out.push_back(p.pqc_sig_type);
-        nocturne::write_u32_le(out, static_cast<uint32_t>(p.pqc_sig.size()));
-        out.insert(out.end(), p.pqc_sig.begin(), p.pqc_sig.end());
-    }
-    if (p.flags & FLAG_HAS_SIG) {
-        if (!p.signature) throw std::runtime_error("flag set but signature missing");
-        out.insert(out.end(), p.signature->begin(), p.signature->end());
-    }
-    return out;
-}
-
-inline Packet deserialize(const Bytes& in) {
-    Packet p;
-    size_t off = 0;
-    
-    // INPUT VALIDATION: Prevent buffer overflow and integer overflow attacks
-    auto need = [&](size_t n) { 
-        // Check for integer overflow in addition
-        if (n > SIZE_MAX - off) {
-            throw std::runtime_error("packet size overflow detected");
-        }
-        // Check for buffer overflow
-        if (off + n > in.size()) {
-            throw std::runtime_error("truncated packet detected");
-        }
-        // Check for reasonable size limits (prevent DoS)
-        if (n > MAX_PACKET_SIZE) {
-            throw std::runtime_error("packet size exceeds maximum allowed");
-        }
-    };
-    
-    auto get = [&](void* dst, size_t n) { 
-        need(n); 
-        // Validate destination pointer
-        if (!dst) {
-            throw std::runtime_error("null destination pointer");
-        }
-        // Validate source data pointer
-        if (!in.data()) {
-            throw std::runtime_error("null source data pointer");
-        }
-        std::memcpy(dst, in.data() + off, n); 
-        off += n; 
-    };
-
-    need(1+1+4 + crypto_kx_PUBLICKEYBYTES + crypto_aead_xchacha20poly1305_ietf_NPUBBYTES + 8 + 4 + 4);
-    get(&p.version, 1);
-    get(&p.flags,   1);
-    uint8_t tmp4[4];
-    get(tmp4,4); p.rotation_id = nocturne::read_u32_le(tmp4);
-    get(p.eph_pk.data(), p.eph_pk.size());
-    get(p.nonce.data(),  p.nonce.size());
-    uint8_t tmp8[8]; get(tmp8,8); p.counter = nocturne::read_u64_le(tmp8);
-
-    if (p.flags & FLAG_HAS_RATCHET) {
-        std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rpk{};
-        get(rpk.data(), rpk.size());
-        p.ratchet_pk = rpk;
-    }
-
-    if (p.flags & FLAG_HAS_PQC_KEM) {
-        get(&p.pqc_kem_type, 1);
-        get(tmp4, 4);
-        uint32_t kem_ct_len = nocturne::read_u32_le(tmp4);
-        if (kem_ct_len == 0 || kem_ct_len > MAX_PQC_KEM_CT_SIZE) {
-            throw std::runtime_error("pqc kem ct size out of bounds");
-        }
-        p.pqc_kem_ct.resize(kem_ct_len);
-        get(p.pqc_kem_ct.data(), kem_ct_len);
-    }
-
-    get(tmp4,4); uint32_t aad_len = nocturne::read_u32_le(tmp4);
-    get(tmp4,4); uint32_t ct_len  = nocturne::read_u32_le(tmp4);
-
-    if (p.version != nocturne::VERSION) throw std::runtime_error("unsupported version");
-
-    // SIZE VALIDATION: Prevent DoS attacks
-    if (aad_len > MAX_AAD_SIZE) {
-        throw std::runtime_error("AAD size exceeds maximum allowed");
-    }
-    if (ct_len > MAX_CIPHERTEXT_SIZE) {
-        throw std::runtime_error("ciphertext size exceeds maximum allowed");
-    }
-    
-    if (aad_len) {
-        p.aad.resize(aad_len);
-        get(p.aad.data(), aad_len);
-    }
-    if (ct_len)  {
-        p.ciphertext.resize(ct_len);
-        get(p.ciphertext.data(), ct_len);
-    }
-
-    // Mirror serialize()'s ordering: PQC sig block before classical sig.
-    if (p.flags & FLAG_HAS_PQC_SIG) {
-        get(&p.pqc_sig_type, 1);
-        get(tmp4, 4);
-        uint32_t sig_len = nocturne::read_u32_le(tmp4);
-        if (sig_len == 0 || sig_len > MAX_PQC_SIG_SIZE) {
-            throw std::runtime_error("pqc sig size out of bounds");
-        }
-        p.pqc_sig.resize(sig_len);
-        get(p.pqc_sig.data(), sig_len);
-    }
-
-    if (p.flags & FLAG_HAS_SIG) {
-        std::array<uint8_t, crypto_sign_BYTES> sig{};
-        get(sig.data(), sig.size());
-        p.signature = sig;
-    }
-    if (off != in.size()) throw std::runtime_error("trailing bytes in packet");
-    return p;
-}
+// serialize()/deserialize() moved to src/protocol/packet.cpp in P5.2.
+// Declarations are visible via #include "src/protocol/packet.hpp".
 
 inline std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>
 derive_aead_key_from_session(const uint8_t* session, size_t session_len, const std::string& info)

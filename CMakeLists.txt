@@ -199,6 +199,7 @@ set(NOCTURNE_CORE_SOURCES
     src/handshake.hpp
     src/transport.hpp
     src/core/side_channel.cpp
+    src/protocol/packet.cpp
     src/pqc/kem/kem_interface.cpp
     src/pqc/kem/kem_factory.cpp
     src/pqc/sig/sig_interface.cpp
@@ -265,6 +266,7 @@ if(BUILD_TESTS)
         add_executable(nocturne-tests
             tests/test_main.cpp
             src/core/side_channel.cpp
+            src/protocol/packet.cpp
             src/pqc/kem/kem_interface.cpp
             src/pqc/kem/kem_factory.cpp
             src/pqc/sig/sig_interface.cpp
@@ -470,6 +472,7 @@ if(BUILD_FUZZER)
     add_executable(nocturne-fuzzer
         tests/fuzzer_main.cpp
         src/core/side_channel.cpp
+        src/protocol/packet.cpp
         src/pqc/kem/kem_interface.cpp
         src/pqc/kem/kem_factory.cpp
         src/pqc/sig/sig_interface.cpp
