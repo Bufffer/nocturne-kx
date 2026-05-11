@@ -201,6 +201,8 @@ set(NOCTURNE_CORE_SOURCES
     src/core/side_channel.cpp
     src/pqc/kem/kem_interface.cpp
     src/pqc/kem/kem_factory.cpp
+    src/pqc/sig/sig_interface.cpp
+    src/pqc/sig/sig_factory.cpp
 )
 
 # PQC backend headers are header-only and pulled in via NOCTURNE_ENABLE_PQC.
@@ -265,6 +267,8 @@ if(BUILD_TESTS)
             src/core/side_channel.cpp
             src/pqc/kem/kem_interface.cpp
             src/pqc/kem/kem_factory.cpp
+            src/pqc/sig/sig_interface.cpp
+            src/pqc/sig/sig_factory.cpp
         )
         target_link_libraries(nocturne-tests PRIVATE Catch2::Catch2 ${SODIUM_LIBRARIES} ${CMAKE_DL_LIBS})
         target_include_directories(nocturne-tests PRIVATE
@@ -450,6 +454,8 @@ if(BUILD_FUZZER)
         src/core/side_channel.cpp
         src/pqc/kem/kem_interface.cpp
         src/pqc/kem/kem_factory.cpp
+        src/pqc/sig/sig_interface.cpp
+        src/pqc/sig/sig_factory.cpp
     )
     target_include_directories(nocturne-fuzzer PRIVATE
         ${SODIUM_INCLUDE_DIRS}
