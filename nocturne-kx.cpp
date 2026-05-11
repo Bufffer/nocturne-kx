@@ -47,17 +47,20 @@
 #include "src/pqc/sig/sig_factory.hpp"
 #include "src/pqc/pqc_config.hpp"
 
-// P5.0–P5.2 foundation: type-safe error path, byte-buffer views, flag
-// bitmask, shared value types, and the Packet wire format. The legacy
-// definitions that used to live in this file have moved into src/core/
-// and src/protocol/, pulled back here for the rest of nocturne-kx.cpp
-// to consume unchanged.
+// P5.0–P5.3 foundation: type-safe error path, byte-buffer views, flag
+// bitmask, shared value types, packet wire format, and the crypto
+// primitive wrappers (KDF, AEAD, Ed25519). The inline definitions that
+// used to live in this file have moved into src/core/ and src/protocol/,
+// pulled back here for the rest of nocturne-kx.cpp to consume unchanged.
 #include "src/core/error.hpp"
 #include "src/core/result.hpp"
 #include "src/core/byte_span.hpp"
 #include "src/core/flags.hpp"
 #include "src/core/types.hpp"
 #include "src/protocol/packet.hpp"
+#include "src/protocol/kdf.hpp"
+#include "src/protocol/aead.hpp"
+#include "src/protocol/signing.hpp"
 #include <iomanip>
 
 // Platform-specific headers for memory protection
@@ -1220,143 +1223,11 @@ inline Ed25519KeyPair gen_ed25519() {
 // serialize()/deserialize() moved to src/protocol/packet.cpp in P5.2.
 // Declarations are visible via #include "src/protocol/packet.hpp".
 
-inline std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>
-derive_aead_key_from_session(const uint8_t* session, size_t session_len, const std::string& info)
-{
-    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> k{};
-    if (crypto_generichash(k.data(), k.size(), session, session_len, reinterpret_cast<const uint8_t*>(info.data()), info.size()) != 0)
-        throw std::runtime_error("key derivation failed");
-    return k;
-}
-
-inline std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>
-derive_tx_key_client(const std::array<uint8_t,crypto_kx_PUBLICKEYBYTES>& pk_eph,
-                     const std::array<uint8_t,crypto_kx_SECRETKEYBYTES>& sk_eph,
-                     const std::array<uint8_t,crypto_kx_PUBLICKEYBYTES>& pk_receiver)
-{
-    std::array<uint8_t, crypto_kx_SESSIONKEYBYTES> rx{}, tx{};
-    if (crypto_kx_client_session_keys(rx.data(), tx.data(),
-                                      pk_eph.data(), sk_eph.data(), pk_receiver.data()) != 0)
-        throw std::runtime_error("kx client session failed");
-    
-    // Side-channel protection: flush cache and add random delay
-    nocturne::side_channel::flush_cache_line(sk_eph.data());
-    nocturne::side_channel::random_delay();
-    
-    auto k = derive_aead_key_from_session(tx.data(), tx.size(), "nocturne-tx-v3");
-    
-    // Secure memory zeroing with side-channel protection
-    nocturne::side_channel::secure_zero_memory(rx.data(), rx.size());
-    nocturne::side_channel::secure_zero_memory(tx.data(), tx.size());
-    nocturne::side_channel::flush_cache_line(rx.data());
-    nocturne::side_channel::flush_cache_line(tx.data());
-    
-    return k;
-}
-
-inline std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>
-derive_rx_key_server(const std::array<uint8_t,crypto_kx_PUBLICKEYBYTES>& pk_sender_eph,
-                     const std::array<uint8_t,crypto_kx_PUBLICKEYBYTES>& pk_receiver,
-                     const std::array<uint8_t,crypto_kx_SECRETKEYBYTES>& sk_receiver)
-{
-    std::array<uint8_t, crypto_kx_SESSIONKEYBYTES> rx{}, tx{};
-    if (crypto_kx_server_session_keys(rx.data(), tx.data(),
-                                      pk_receiver.data(), sk_receiver.data(), pk_sender_eph.data()) != 0)
-        throw std::runtime_error("kx server session failed");
-    
-    // Side-channel protection: flush cache and add random delay
-    nocturne::side_channel::flush_cache_line(sk_receiver.data());
-    nocturne::side_channel::random_delay();
-    
-    // Use the same context string as encryption side to ensure key equality
-    auto k = derive_aead_key_from_session(rx.data(), rx.size(), "nocturne-tx-v3");
-    
-    // Secure memory zeroing with side-channel protection
-    nocturne::side_channel::secure_zero_memory(rx.data(), rx.size());
-    nocturne::side_channel::secure_zero_memory(tx.data(), tx.size());
-    nocturne::side_channel::flush_cache_line(rx.data());
-    nocturne::side_channel::flush_cache_line(tx.data());
-    
-    return k;
-}
-
-// Ratchet KDF: mixes prev_key and DH shared (x25519) into new symmetric key
-inline std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>
-ratchet_mix(const std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>& prev_key,
-            const uint8_t* dh_shared, size_t dh_len)
-{
-    // BLAKE2b(prev_key || dh_shared || "nocturne-ratchet-v3")
-    Bytes seed; seed.insert(seed.end(), prev_key.begin(), prev_key.end()); seed.insert(seed.end(), dh_shared, dh_shared + dh_len);
-    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> newk{};
-    if (crypto_generichash(newk.data(), newk.size(), seed.data(), seed.size(), reinterpret_cast<const uint8_t*>("nocturne-ratchet-v3"), sizeof("nocturne-ratchet-v3")-1) != 0)
-        throw std::runtime_error("ratchet kdf failed");
-    
-    // Side-channel protection: secure memory zeroing
-    nocturne::side_channel::secure_zero_memory(seed.data(), seed.size());
-    nocturne::side_channel::flush_cache_line(seed.data());
-    
-    return newk;
-}
-
-inline Bytes aead_encrypt_xchacha(const std::array<uint8_t,crypto_aead_xchacha20poly1305_ietf_KEYBYTES>& key,
-                                  const std::array<uint8_t,crypto_aead_xchacha20poly1305_ietf_NPUBBYTES>& nonce,
-                                  const Bytes& aad,
-                                  const Bytes& pt)
-{
-    Bytes ct(pt.size() + crypto_aead_xchacha20poly1305_ietf_ABYTES);
-    unsigned long long ct_len = 0;
-    if (crypto_aead_xchacha20poly1305_ietf_encrypt(
-            ct.data(), &ct_len,
-            pt.data(), pt.size(),
-            aad.empty()?nullptr:aad.data(), aad.size(),
-            nullptr,
-            nonce.data(), key.data()) != 0)
-        throw std::runtime_error("aead encrypt failed");
-    ct.resize(static_cast<size_t>(ct_len));
-    return ct;
-}
-
-inline Bytes aead_decrypt_xchacha(const std::array<uint8_t,crypto_aead_xchacha20poly1305_ietf_KEYBYTES>& key,
-                                  const std::array<uint8_t,crypto_aead_xchacha20poly1305_ietf_NPUBBYTES>& nonce,
-                                  const Bytes& aad,
-                                  const Bytes& ct)
-{
-    if (ct.size() < crypto_aead_xchacha20poly1305_ietf_ABYTES)
-        throw std::runtime_error("ciphertext too short");
-    Bytes pt(ct.size() - crypto_aead_xchacha20poly1305_ietf_ABYTES);
-    unsigned long long pt_len = 0;
-    if (crypto_aead_xchacha20poly1305_ietf_decrypt(
-            pt.data(), &pt_len,
-            nullptr,
-            ct.data(), ct.size(),
-            aad.empty()?nullptr:aad.data(), aad.size(),
-            nonce.data(), key.data()) != 0)
-        throw std::runtime_error("aead decrypt failed (auth)");
-    pt.resize(static_cast<size_t>(pt_len));
-    return pt;
-}
-
-inline std::array<uint8_t, crypto_sign_BYTES>
-ed25519_sign(const Bytes& msg, const std::array<uint8_t,crypto_sign_SECRETKEYBYTES>& sk)
-{
-    std::array<uint8_t, crypto_sign_BYTES> sig{};
-    crypto_sign_detached(sig.data(), nullptr, msg.data(), msg.size(), sk.data());
-    return sig;
-}
-
-inline bool ed25519_verify(const Bytes& msg,
-                           const std::array<uint8_t,crypto_sign_PUBLICKEYBYTES>& pk,
-                           const std::array<uint8_t,crypto_sign_BYTES>& sig)
-{
-    // Side-channel protection: constant-time verification
-    int result = crypto_sign_verify_detached(sig.data(), msg.data(), msg.size(), pk.data());
-    
-    // Add random delay to prevent timing attacks
-    nocturne::side_channel::random_delay();
-    nocturne::side_channel::memory_barrier();
-    
-    return result == 0;
-}
+// derive_aead_key_from_session, derive_tx_key_client, derive_rx_key_server,
+// ratchet_mix, aead_encrypt_xchacha, aead_decrypt_xchacha, ed25519_sign,
+// ed25519_verify all moved to src/protocol/{kdf,aead,signing}.hpp in P5.3.
+// All retain their nocturne:: namespace; call sites consume them unchanged
+// except that the (ptr, size) pair API has been replaced with BytesView.
 
 } // namespace nocturne
 
@@ -1867,7 +1738,7 @@ nocturne::Bytes encrypt_packet(
         // compute DH between ratk.sk and receiver_x25519_pk (real DH)
         std::array<uint8_t, crypto_scalarmult_BYTES> dh_shared{};
         if (crypto_scalarmult(dh_shared.data(), ratk.sk.data(), receiver_x25519_pk.data()) != 0) throw std::runtime_error("dh failed");
-        auto mixed = ratchet_mix(key, dh_shared.data(), dh_shared.size());
+        auto mixed = ratchet_mix(key, BytesView{dh_shared.data(), dh_shared.size()});
         // Side-channel protection: secure memory zeroing
         nocturne::side_channel::secure_zero_memory(key.data(), key.size());
         nocturne::side_channel::secure_zero_memory(ratk.sk.data(), ratk.sk.size());
@@ -2064,7 +1935,7 @@ nocturne::Bytes decrypt_packet(
         if (!p.ratchet_pk) throw std::runtime_error("ratchet pk missing");
         std::array<uint8_t, crypto_scalarmult_BYTES> dh_shared{};
         if (crypto_scalarmult(dh_shared.data(), receiver_x25519_sk.data(), p.ratchet_pk->data()) != 0) throw std::runtime_error("dh failed");
-        auto mixed = ratchet_mix(key, dh_shared.data(), dh_shared.size());
+        auto mixed = ratchet_mix(key, BytesView{dh_shared.data(), dh_shared.size()});
         // Side-channel protection: secure memory zeroing
         nocturne::side_channel::secure_zero_memory(key.data(), key.size());
         nocturne::side_channel::flush_cache_line(key.data());
@@ -2100,16 +1971,7 @@ nocturne::Bytes decrypt_packet(
 //   1 = HYBRID_X25519_MLKEM1024 (recommended; 1600B pk, 3200B sk, 1601B ct)
 //   2 = PURE_MLKEM1024          (1568B pk, 3168B sk, 1568B ct)
 
-inline std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES>
-derive_aead_key_from_kem_secret(const std::array<uint8_t, 32>& kem_ss,
-                                const std::string& info) {
-    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> k{};
-    if (crypto_generichash(k.data(), k.size(), kem_ss.data(), kem_ss.size(),
-                           reinterpret_cast<const uint8_t*>(info.data()), info.size()) != 0) {
-        throw std::runtime_error("kem aead key derivation failed");
-    }
-    return k;
-}
+// derive_aead_key_from_kem_secret moved to src/protocol/kdf.hpp in P5.3.
 
 nocturne::Bytes encrypt_packet_kem(
     nocturne::pqc::KEMType kem_type,
