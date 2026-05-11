@@ -36,6 +36,12 @@
   #define nocturne_close_socket   ::close
 #endif
 
+#ifdef NOCTURNE_ENABLE_TLS_TRANSPORT
+  #include <openssl/ssl.h>
+  #include <openssl/err.h>
+  #include <memory>
+#endif
+
 namespace nocturne {
 namespace security {
 
@@ -560,6 +566,157 @@ private:
         nocturne_close_socket(sock);
     }
 
+#ifdef NOCTURNE_ENABLE_TLS_TRANSPORT
+    /**
+     * @brief Send a syslog payload over TLS 1.3 (RFC 5425).
+     *
+     * Mirrors the connection setup style of src/tcp_tls_transport.hpp:
+     * TLS 1.3 only, no compression, peer verification when a CA bundle
+     * is supplied, optional mTLS via client cert+key. Framing matches
+     * tcp_send_to's octet-counting choice — RFC 5425 explicitly mandates
+     * octet-counting framing for syslog-over-TLS, so callers should
+     * pass octet_counting_frame=true.
+     */
+    static void tls_send_to(const std::string& host,
+                            uint16_t port,
+                            const std::string& payload,
+                            const std::optional<std::string>& ca_cert_path,
+                            const std::optional<std::string>& client_cert_path,
+                            const std::optional<std::string>& client_key_path,
+                            bool octet_counting_frame) {
+        ensure_winsock_initialized();
+
+        // SSL_library_init / OPENSSL_init_ssl is a no-op after OpenSSL 1.1
+        // is initialized on first use; relying on that here.
+        std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> ctx(
+            SSL_CTX_new(TLS_client_method()), SSL_CTX_free);
+        if (!ctx) {
+            throw std::runtime_error("SIEM TLS: SSL_CTX_new failed");
+        }
+        // TLS 1.3 only — same posture as src/tcp_tls_transport.hpp.
+        SSL_CTX_set_min_proto_version(ctx.get(), TLS1_3_VERSION);
+        SSL_CTX_set_max_proto_version(ctx.get(), TLS1_3_VERSION);
+        SSL_CTX_set_options(ctx.get(),
+                            SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 |
+                            SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1 |
+                            SSL_OP_NO_TLSv1_2 | SSL_OP_NO_COMPRESSION);
+        SSL_CTX_set_mode(ctx.get(), SSL_MODE_AUTO_RETRY);
+
+        if (ca_cert_path) {
+            if (SSL_CTX_load_verify_locations(ctx.get(),
+                                              ca_cert_path->c_str(),
+                                              nullptr) != 1) {
+                throw std::runtime_error(
+                    "SIEM TLS: failed to load CA bundle from " + *ca_cert_path);
+            }
+            SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_PEER, nullptr);
+        } else {
+            // No CA → accept any cert. SIEM operators that need peer
+            // verification must populate ca_cert_path in SIEMConfig.
+            SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, nullptr);
+        }
+
+        if (client_cert_path && client_key_path) {
+            if (SSL_CTX_use_certificate_file(ctx.get(),
+                                             client_cert_path->c_str(),
+                                             SSL_FILETYPE_PEM) != 1) {
+                throw std::runtime_error(
+                    "SIEM TLS: failed to load client cert " + *client_cert_path);
+            }
+            if (SSL_CTX_use_PrivateKey_file(ctx.get(),
+                                            client_key_path->c_str(),
+                                            SSL_FILETYPE_PEM) != 1) {
+                throw std::runtime_error(
+                    "SIEM TLS: failed to load client key " + *client_key_path);
+            }
+            if (SSL_CTX_check_private_key(ctx.get()) != 1) {
+                throw std::runtime_error(
+                    "SIEM TLS: client cert and key mismatch");
+            }
+        }
+
+        struct addrinfo* ai = resolve(host, port, SOCK_STREAM);
+
+        nocturne_socket_t sock = NOCTURNE_INVALID_SOCKET;
+        for (auto* it = ai; it != nullptr; it = it->ai_next) {
+            sock = ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+            if (sock == NOCTURNE_INVALID_SOCKET) continue;
+            if (::connect(sock, it->ai_addr,
+#ifdef _WIN32
+                          static_cast<int>(it->ai_addrlen)
+#else
+                          it->ai_addrlen
+#endif
+                          ) == 0) {
+                break;
+            }
+            nocturne_close_socket(sock);
+            sock = NOCTURNE_INVALID_SOCKET;
+        }
+        ::freeaddrinfo(ai);
+
+        if (sock == NOCTURNE_INVALID_SOCKET) {
+            throw std::runtime_error("SIEM TLS connect to " + host + ":" +
+                                     std::to_string(port) + " failed");
+        }
+
+        std::unique_ptr<SSL, decltype(&SSL_free)> ssl(SSL_new(ctx.get()), SSL_free);
+        if (!ssl) {
+            nocturne_close_socket(sock);
+            throw std::runtime_error("SIEM TLS: SSL_new failed");
+        }
+
+        // SNI + hostname verification (only when CA is provided — without
+        // a CA, hostname checks would be misleading).
+        SSL_set_tlsext_host_name(ssl.get(), host.c_str());
+        if (ca_cert_path) {
+            if (SSL_set1_host(ssl.get(), host.c_str()) != 1) {
+                nocturne_close_socket(sock);
+                throw std::runtime_error("SIEM TLS: SSL_set1_host failed");
+            }
+        }
+
+        SSL_set_fd(ssl.get(), static_cast<int>(sock));
+        if (SSL_connect(ssl.get()) != 1) {
+            unsigned long err = ERR_get_error();
+            char buf[256] = {0};
+            ERR_error_string_n(err, buf, sizeof(buf));
+            nocturne_close_socket(sock);
+            throw std::runtime_error(std::string("SIEM TLS handshake failed: ") + buf);
+        }
+
+        std::string framed;
+        if (octet_counting_frame) {
+            framed.reserve(payload.size() + 16);
+            framed += std::to_string(payload.size());
+            framed += ' ';
+            framed += payload;
+        } else {
+            framed.reserve(payload.size() + 1);
+            framed += payload;
+            framed += '\n';
+        }
+
+        const char* buf = framed.data();
+        size_t remaining = framed.size();
+        while (remaining > 0) {
+            int chunk = SSL_write(ssl.get(), buf, static_cast<int>(remaining));
+            if (chunk <= 0) {
+                int err = SSL_get_error(ssl.get(), chunk);
+                SSL_shutdown(ssl.get());
+                nocturne_close_socket(sock);
+                throw std::runtime_error(
+                    "SIEM TLS SSL_write failed (err=" + std::to_string(err) + ")");
+            }
+            buf += chunk;
+            remaining -= static_cast<size_t>(chunk);
+        }
+
+        SSL_shutdown(ssl.get());
+        nocturne_close_socket(sock);
+    }
+#endif // NOCTURNE_ENABLE_TLS_TRANSPORT
+
 public:
     explicit SIEMConnector(const SIEMConfig& config) : config_(config) {}
 
@@ -625,8 +782,18 @@ public:
                 return;
 
             case SIEMType::SYSLOG_TLS:
+#ifdef NOCTURNE_ENABLE_TLS_TRANSPORT
+                tls_send_to(config_.host, config_.port, formatted,
+                            config_.ca_cert_path,
+                            config_.client_cert_path,
+                            config_.client_key_path,
+                            /*octet_counting_frame=*/true);
+                return;
+#else
                 throw std::runtime_error(
-                    "SIEM SYSLOG_TLS not yet wired (OpenSSL pending P2.5)");
+                    "SIEM SYSLOG_TLS requires the build to be compiled with "
+                    "ENABLE_TLS_TRANSPORT=ON (OpenSSL not linked)");
+#endif
 
             case SIEMType::SPLUNK_HEC:
                 throw std::runtime_error(

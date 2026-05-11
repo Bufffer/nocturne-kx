@@ -2,9 +2,10 @@
 //
 // Verifies that SIEMConnector::send() actually pushes bytes over the wire for
 // the transports we wired up: SYSLOG_UDP, SYSLOG_TCP (RFC 6587 octet-counting),
-// CEF, LEEF. Stubbed transports (SYSLOG_TLS / SPLUNK_HEC / KAFKA / CUSTOM /
-// ELASTICSEARCH) are exercised separately to confirm they throw the expected
-// "not yet wired" error so the AuditLogger error callback path stays sane.
+// CEF, LEEF, and (when NOCTURNE_ENABLE_TLS_TRANSPORT is defined at build time)
+// SYSLOG_TLS. Stubbed transports (SPLUNK_HEC / ELASTICSEARCH / KAFKA / CUSTOM)
+// are exercised separately to confirm they throw the expected "not yet wired"
+// error so the AuditLogger error callback path stays sane.
 //
 // POSIX-only: CI runs on Ubuntu, and the user's local box is Windows-without-
 // libsodium, so guarding with #ifdef _WIN32 is enough to keep the build green.
@@ -247,17 +248,49 @@ TEST_CASE("SIEMConnector throws on unwired transports", "[siem][network]") {
         SIEMConfig cfg;
         cfg.type = type;
         cfg.host = "127.0.0.1";
-        cfg.port = 1; // never reached — should throw before connect
+        cfg.port = 1; // never reached — should throw before/at connect
         SIEMConnector conn(cfg);
         REQUIRE_THROWS_AS(conn.send(rec), std::runtime_error);
     };
 
+    // SYSLOG_TLS is "wired" when ENABLE_TLS_TRANSPORT is on, but the
+    // exception still fires — port 1 is unbound so the TLS dial fails
+    // with "TLS connect ... failed" instead of the stub's "not wired"
+    // message. Either flavor is std::runtime_error.
     try_type(SIEMType::SYSLOG_TLS);
+
     try_type(SIEMType::SPLUNK_HEC);
     try_type(SIEMType::ELASTICSEARCH);
     try_type(SIEMType::KAFKA);
     try_type(SIEMType::CUSTOM);
 }
+
+#ifdef NOCTURNE_ENABLE_TLS_TRANSPORT
+// When OpenSSL is in the build, SYSLOG_TLS is no longer a stub. We don't
+// stand up a self-signed acceptor here (the dedicated tcp-tls-transport-
+// test target already covers full TLS 1.3 loopback); just confirm the
+// error path is the TLS dial path, not the "not yet wired" stub —
+// otherwise a build that silently lost the OpenSSL link would regress
+// to stub behavior without any test catching it.
+TEST_CASE("SIEMConnector SYSLOG_TLS reaches the TLS code path", "[siem][tls]") {
+    SIEMConfig cfg;
+    cfg.type = SIEMType::SYSLOG_TLS;
+    cfg.host = "127.0.0.1";
+    cfg.port = 1;  // unreachable — connect must fail
+    SIEMConnector conn(cfg);
+    auto rec = make_record("tls-probe");
+    try {
+        conn.send(rec);
+        FAIL("expected SYSLOG_TLS send to throw on port 1");
+    } catch (const std::runtime_error& e) {
+        std::string what = e.what();
+        // Either "SIEM TLS connect to 127.0.0.1:1 failed" (couldn't
+        // dial) or a handshake error. Both prove we left the stub.
+        REQUIRE(what.find("not yet wired") == std::string::npos);
+        REQUIRE(what.find("TLS") != std::string::npos);
+    }
+}
+#endif // NOCTURNE_ENABLE_TLS_TRANSPORT
 
 TEST_CASE("SIEMConnector NONE is a silent no-op", "[siem][network]") {
     SIEMConfig cfg;

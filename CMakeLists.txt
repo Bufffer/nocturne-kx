@@ -357,6 +357,16 @@ if(BUILD_TESTS)
         if(WIN32)
             target_link_libraries(security-siem-test PRIVATE Ws2_32)
         endif()
+        # When TLS is on, siem_connector.hpp's SYSLOG_TLS branch is wired
+        # against OpenSSL (P3 #14). The test target needs OpenSSL too,
+        # otherwise the SYSLOG_TLS expectations in tests/security/
+        # test_siem_connector.cpp can't even compile.
+        if(ENABLE_TLS_TRANSPORT)
+            target_link_libraries(security-siem-test PRIVATE
+                OpenSSL::SSL
+                OpenSSL::Crypto
+            )
+        endif()
         add_test(NAME security-siem-test COMMAND security-siem-test)
 
         # TCP/TLS transport adapter tests (P2.5) — self-signed cert loopback,
