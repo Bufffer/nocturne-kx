@@ -72,19 +72,37 @@ if(ENABLE_TLS_TRANSPORT)
 endif()
 
 # liboqs (Post-Quantum Cryptography) - optional but recommended
+# Override discovery with -DLIBOQS_ROOT=<path> or the LIBOQS_ROOT env var.
 if(ENABLE_PQC)
-    # First try to find system-installed liboqs
-    find_library(LIBOQS_LIBRARY NAMES oqs PATHS
-        "C:/Users/Maxval/Desktop/liboqs/build/lib/Release"
-        "C:/Users/Maxval/Desktop/liboqs/build/lib"
-        "/usr/local/lib"
-        "/usr/lib"
+    set(LIBOQS_ROOT "" CACHE PATH "Optional root of a prebuilt liboqs install (contains include/ and lib/)")
+    if(NOT LIBOQS_ROOT AND DEFINED ENV{LIBOQS_ROOT})
+        set(LIBOQS_ROOT "$ENV{LIBOQS_ROOT}")
+    endif()
+
+    set(_LIBOQS_HINT_LIB_DIRS "")
+    set(_LIBOQS_HINT_INC_DIRS "")
+    if(LIBOQS_ROOT)
+        list(APPEND _LIBOQS_HINT_LIB_DIRS
+            "${LIBOQS_ROOT}/lib"
+            "${LIBOQS_ROOT}/lib/Release"
+            "${LIBOQS_ROOT}/build/lib"
+            "${LIBOQS_ROOT}/build/lib/Release"
+        )
+        list(APPEND _LIBOQS_HINT_INC_DIRS
+            "${LIBOQS_ROOT}/include"
+            "${LIBOQS_ROOT}/build/include"
+        )
+    endif()
+
+    # First try to find system-installed (or LIBOQS_ROOT-pointed) liboqs.
+    find_library(LIBOQS_LIBRARY NAMES oqs
+        HINTS ${_LIBOQS_HINT_LIB_DIRS}
+        PATHS "/usr/local/lib" "/usr/lib"
     )
 
-    find_path(LIBOQS_INCLUDE_DIR oqs/oqs.h PATHS
-        "C:/Users/Maxval/Desktop/liboqs/build/include"
-        "/usr/local/include"
-        "/usr/include"
+    find_path(LIBOQS_INCLUDE_DIR oqs/oqs.h
+        HINTS ${_LIBOQS_HINT_INC_DIRS}
+        PATHS "/usr/local/include" "/usr/include"
     )
 
     if(LIBOQS_LIBRARY AND LIBOQS_INCLUDE_DIR)
