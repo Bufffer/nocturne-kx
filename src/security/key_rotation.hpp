@@ -302,7 +302,13 @@ public:
             return std::nullopt; // Awaiting approval
         }
 
-        // Immediate rotation (no approval needed or emergency)
+        // Immediate rotation (no approval needed or emergency). complete_rotation
+        // calls keys_.at(new_hex), so the entry must exist first — the
+        // dual-approval branch inserts it before returning, but this path
+        // bypassed insertion entirely and threw unordered_map::at.
+        new_metadata.state = KeyState::PENDING;
+        keys_[key_id_to_hex(new_metadata.key_id)] = new_metadata;
+
         complete_rotation(old_metadata.key_id, new_metadata.key_id, trigger, initiator, {});
 
         return new_metadata.key_id;
