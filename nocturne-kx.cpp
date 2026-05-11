@@ -1162,6 +1162,18 @@ constexpr uint8_t FLAG_HAS_PQC_KEM = 0x04;
 // Maximum KEM ciphertext size we accept (hybrid is 1601B; cap conservatively at
 // 4 KiB to leave headroom for future schemes while bounding DoS exposure).
 constexpr size_t MAX_PQC_KEM_CT_SIZE = 4 * 1024;
+// FLAG_HAS_PQC_SIG carries a *variable-size* signature whose layout differs
+// from the fixed 64-byte FLAG_HAS_SIG path. When set, the wire carries:
+//   [1B pqc_sig_type][4B LE pqc_sig_len][N bytes pqc_sig]
+// after the ciphertext block, where pqc_sig_type matches
+// nocturne::pqc::SigType (0=Ed25519, 1=Hybrid Ed25519+ML-DSA-87, 2=ML-DSA-87).
+// FLAG_HAS_SIG and FLAG_HAS_PQC_SIG are mutually exclusive in practice; the
+// serializer permits both for forward compat (FLAG_HAS_PQC_SIG block first,
+// then the 64-byte FLAG_HAS_SIG block).
+constexpr uint8_t FLAG_HAS_PQC_SIG = 0x08;
+// Cap at 8 KiB — hybrid Ed25519+ML-DSA-87 is 4691 B; leaves headroom for
+// SLH-DSA or future signature variants while bounding allocation amplification.
+constexpr size_t MAX_PQC_SIG_SIZE = 8 * 1024;
 
 using Bytes = std::vector<uint8_t>;
 
@@ -1248,6 +1260,11 @@ struct Packet {
     Bytes aad;
     Bytes ciphertext; // includes Poly1305 tag
     std::optional<std::array<uint8_t, crypto_sign_BYTES>> signature;
+    // PQC SIG fields — populated only when FLAG_HAS_PQC_SIG is set. Variable-
+    // size to handle Ed25519 (64 B), ML-DSA-87 (4627 B), and hybrid (4691 B)
+    // through one wire path.
+    uint8_t pqc_sig_type{0};
+    Bytes pqc_sig;
 };
 
 // portable LE helpers
@@ -1293,6 +1310,16 @@ inline Bytes serialize(const Packet& p) {
     nocturne::write_u32_le(out, static_cast<uint32_t>(p.ciphertext.size()));
     if (!p.aad.empty()) out.insert(out.end(), p.aad.begin(), p.aad.end());
     if (!p.ciphertext.empty()) out.insert(out.end(), p.ciphertext.begin(), p.ciphertext.end());
+    // PQC signature block before the classical signature: when both flags are
+    // set (currently not exercised but reserved), stripping the classical sig
+    // for canonical re-serialization still leaves the PQC sig in place.
+    if (p.flags & FLAG_HAS_PQC_SIG) {
+        if (p.pqc_sig.empty()) throw std::runtime_error("pqc-sig flag set but bytes missing");
+        if (p.pqc_sig.size() > MAX_PQC_SIG_SIZE) throw std::runtime_error("pqc sig too large");
+        out.push_back(p.pqc_sig_type);
+        nocturne::write_u32_le(out, static_cast<uint32_t>(p.pqc_sig.size()));
+        out.insert(out.end(), p.pqc_sig.begin(), p.pqc_sig.end());
+    }
     if (p.flags & FLAG_HAS_SIG) {
         if (!p.signature) throw std::runtime_error("flag set but signature missing");
         out.insert(out.end(), p.signature->begin(), p.signature->end());
@@ -1373,13 +1400,25 @@ inline Packet deserialize(const Bytes& in) {
         throw std::runtime_error("ciphertext size exceeds maximum allowed");
     }
     
-    if (aad_len) { 
-        p.aad.resize(aad_len); 
-        get(p.aad.data(), aad_len); 
+    if (aad_len) {
+        p.aad.resize(aad_len);
+        get(p.aad.data(), aad_len);
     }
-    if (ct_len)  { 
-        p.ciphertext.resize(ct_len); 
-        get(p.ciphertext.data(), ct_len); 
+    if (ct_len)  {
+        p.ciphertext.resize(ct_len);
+        get(p.ciphertext.data(), ct_len);
+    }
+
+    // Mirror serialize()'s ordering: PQC sig block before classical sig.
+    if (p.flags & FLAG_HAS_PQC_SIG) {
+        get(&p.pqc_sig_type, 1);
+        get(tmp4, 4);
+        uint32_t sig_len = nocturne::read_u32_le(tmp4);
+        if (sig_len == 0 || sig_len > MAX_PQC_SIG_SIZE) {
+            throw std::runtime_error("pqc sig size out of bounds");
+        }
+        p.pqc_sig.resize(sig_len);
+        get(p.pqc_sig.data(), sig_len);
     }
 
     if (p.flags & FLAG_HAS_SIG) {
