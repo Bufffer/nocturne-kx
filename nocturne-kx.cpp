@@ -2597,17 +2597,22 @@ Subcommands:
       hybrid:           writes receiver_hybrid_{pk,sk}.bin (1600B/3200B, X25519+ML-KEM-1024)
       mlkem:            writes receiver_mlkem_{pk,sk}.bin (1568B/3168B, FIPS 203 Level 5)
 
-  gen-signer <outdir>
-      -> Writes sender_ed25519_pk.bin and sender_ed25519_sk.bin (file-backed keys)
+  gen-signer <outdir> [--sig-type ed25519|hybrid|mldsa]
+      ed25519 (default): writes sender_ed25519_{pk,sk}.bin (32B/64B, classical)
+      mldsa:             writes sender_mldsa87_{pk,sk}.bin  (2592B/4896B, FIPS 204 Level 5)
+      hybrid:            writes sender_hybrid_sig_{pk,sk}.bin (2624B/4960B, Ed25519+ML-DSA-87)
 
   encrypt --rx-pk <file> [--kem x25519|hybrid|mlkem]
           [--sign-hsm-uri file://<skfile> or hsm://<id>] [--aad <str>] [--rotation-id <n>] [--ratchet]
+          [--pqc-sign-key <file> --pqc-sig-type ed25519|hybrid|mldsa]
           --in <pt> --out <pkt> [--replay-db <path>] [--mac-key <file>]
-      Default --kem is x25519. Hybrid/mlkem produce post-quantum-safe packets
-      with FLAG_HAS_PQC_KEM set; the receiver auto-detects on decrypt.
+      --pqc-sign-key uses the FLAG_HAS_PQC_SIG path (variable-length signature),
+      orthogonal to --sign-hsm-uri's classical Ed25519 path. Combine
+      --kem hybrid + --pqc-sig-type hybrid for full PQ-resistant E2E.
 
-  decrypt --rx-pk <file> --rx-sk <file> [--expect-signer <file>] [--min-rotation <n>] --in <pkt> --out <pt>
-          [--replay-db <path>] [--mac-key <file>]
+  decrypt --rx-pk <file> --rx-sk <file> [--expect-signer <file>] [--min-rotation <n>]
+          [--expect-pqc-signer <pk-file> --pqc-sig-type ed25519|hybrid|mldsa]
+          --in <pkt> --out <pt> [--replay-db <path>] [--mac-key <file>]
       KEM mode is auto-detected from the packet header. The rx-pk/rx-sk file
       sizes must match the mode: 32B for X25519, 1600B/3200B for hybrid,
       1568B/3168B for mlkem.
@@ -2738,13 +2743,43 @@ int main(int argc, char** argv) {
         }
 
         if (cmd == "gen-signer") {
-            if (argc != 3) { usage(); return 1; }
+            if (argc < 3) { usage(); return 1; }
             std::filesystem::path outdir = argv[2];
+            std::string sig_str = "ed25519";
+            for (int i = 3; i < argc; ++i) {
+                std::string a = argv[i];
+                if (a == "--sig-type" && i + 1 < argc) {
+                    sig_str = argv[++i];
+                } else {
+                    std::cerr << "ERR: unknown gen-signer arg: " << a << "\n";
+                    return 1;
+                }
+            }
             std::filesystem::create_directories(outdir);
-            auto kp = nocturne::gen_ed25519();
-            write_all_raw(outdir / "sender_ed25519_pk.bin", kp.pk.data(), kp.pk.size());
-            write_all_raw(outdir / "sender_ed25519_sk.bin", kp.sk.data(), kp.sk.size());
-            std::cout << "Wrote signer keys to " << outdir << "\n";
+
+            if (sig_str == "ed25519") {
+                auto kp = nocturne::gen_ed25519();
+                write_all_raw(outdir / "sender_ed25519_pk.bin", kp.pk.data(), kp.pk.size());
+                write_all_raw(outdir / "sender_ed25519_sk.bin", kp.sk.data(), kp.sk.size());
+                std::cout << "Wrote Ed25519 signer keys to " << outdir << "\n";
+            } else if (sig_str == "hybrid" || sig_str == "mldsa") {
+                auto sig_type = (sig_str == "hybrid")
+                    ? nocturne::pqc::SigType::HYBRID_ED25519_MLDSA87
+                    : nocturne::pqc::SigType::PURE_MLDSA87;
+                auto scheme = nocturne::pqc::SignatureFactory{}.create(sig_type);
+                auto kp = scheme->generate_keypair();
+                std::string base = (sig_str == "hybrid") ? "sender_hybrid_sig" : "sender_mldsa87";
+                write_all_raw(outdir / (base + "_pk.bin"),
+                              kp.public_key.data(), kp.public_key.size());
+                write_all_raw(outdir / (base + "_sk.bin"),
+                              kp.secret_key.data(), kp.secret_key.size());
+                std::cout << "Wrote " << scheme->algorithm_name() << " signer keys to "
+                          << outdir << " (pk=" << kp.public_key.size()
+                          << "B, sk=" << kp.secret_key.size() << "B)\n";
+            } else {
+                throw std::runtime_error("unknown --sig-type value: " + sig_str +
+                                         " (expected ed25519|hybrid|mldsa)");
+            }
             return 0;
         }
 
@@ -2753,6 +2788,8 @@ int main(int argc, char** argv) {
             std::string aad_str, signer_uri;
             uint32_t rotation_id = 0; bool use_ratchet = false;
             std::string kem_str = "x25519"; // x25519 (classic) | hybrid | mlkem
+            std::filesystem::path pqc_sign_key_path;
+            std::string pqc_sig_str; // ed25519 | hybrid | mldsa (empty = disabled)
             
             // ERROR HANDLING: Comprehensive input validation and error management
             try {
@@ -2788,6 +2825,8 @@ int main(int argc, char** argv) {
                     else if (a=="--out") out = need(1);
                     else if (a=="--replay-db") replaydb_path = need(1);
                     else if (a=="--mac-key") mac_key_path = need(1);
+                    else if (a=="--pqc-sign-key") pqc_sign_key_path = need(1);
+                    else if (a=="--pqc-sig-type") pqc_sig_str = need(1);
                     else throw std::runtime_error("unknown argument: " + a);
                 }
                 
@@ -2899,23 +2938,62 @@ int main(int argc, char** argv) {
             auto pt = read_all(in);
             nocturne::Bytes aad(aad_str.begin(), aad_str.end());
 
+            // Optional PQC signer: --pqc-sign-key + --pqc-sig-type. Reads the
+            // raw secret-key file and prepares a PqcSignerConfig that
+            // encrypt_packet / encrypt_packet_kem will use to populate the
+            // FLAG_HAS_PQC_SIG block.
+            std::optional<nocturne::PqcSignerConfig> pqc_signer_cfg;
+            if (!pqc_sign_key_path.empty() || !pqc_sig_str.empty()) {
+                if (pqc_sign_key_path.empty() || pqc_sig_str.empty()) {
+                    std::cerr << "ERR: --pqc-sign-key and --pqc-sig-type must both be set\n";
+                    return 1;
+                }
+                nocturne::pqc::SigType st;
+                if      (pqc_sig_str == "ed25519") st = nocturne::pqc::SigType::CLASSIC_ED25519;
+                else if (pqc_sig_str == "hybrid")  st = nocturne::pqc::SigType::HYBRID_ED25519_MLDSA87;
+                else if (pqc_sig_str == "mldsa")   st = nocturne::pqc::SigType::PURE_MLDSA87;
+                else {
+                    std::cerr << "ERR: unknown --pqc-sig-type: " << pqc_sig_str
+                              << " (expected ed25519|hybrid|mldsa)\n";
+                    return 1;
+                }
+                auto sk_bytes = read_all(pqc_sign_key_path);
+                auto scheme = nocturne::pqc::SignatureFactory{}.create(st);
+                if (sk_bytes.size() != scheme->secret_key_size()) {
+                    std::cerr << "ERR: --pqc-sign-key size mismatch (expected "
+                              << scheme->secret_key_size() << " for "
+                              << scheme->algorithm_name() << ", got "
+                              << sk_bytes.size() << ")\n";
+                    return 1;
+                }
+                pqc_signer_cfg = nocturne::PqcSignerConfig{st, std::move(sk_bytes)};
+            }
+
             std::optional<std::filesystem::path> mac_key = mac_key_path.empty()?std::nullopt:std::optional<std::filesystem::path>(mac_key_path);
             ReplayDB rdb(replaydb_path.empty()?std::filesystem::path(std::string(std::getenv("HOME")?std::getenv("HOME"):".")) / ".nocturne" / "replaydb.bin": replaydb_path, mac_key, opt_tpm_counter);
             ReplayDB* rdbp = replaydb_path.empty()?nullptr:&rdb;
 
+            const nocturne::PqcSignerConfig* pqc_ptr =
+                pqc_signer_cfg.has_value() ? &*pqc_signer_cfg : nullptr;
+
             nocturne::Bytes pkt;
             if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
-                pkt = encrypt_packet(rxpk_arr, pt, aad, rotation_id, use_ratchet, signer.get(), rdbp);
-                std::cout << "Encrypted (X25519) -> " << out << " (" << pkt.size() << " bytes)\n";
+                pkt = encrypt_packet(rxpk_arr, pt, aad, rotation_id, use_ratchet,
+                                     signer.get(), rdbp, "", pqc_ptr);
+                std::cout << "Encrypted (X25519"
+                          << (pqc_ptr ? std::string(" + ") + nocturne::pqc::sig_type_to_string(pqc_ptr->type) : "")
+                          << ") -> " << out << " (" << pkt.size() << " bytes)\n";
             } else {
                 if (use_ratchet) {
                     std::cerr << "WARNING: --ratchet ignored in PQC/KEM mode (DR uses its own key path)\n";
                 }
                 pkt = encrypt_packet_kem(kem_type, rxpk_bytes, pt, aad, rotation_id,
-                                         signer.get(), rdbp);
+                                         signer.get(), rdbp, "", pqc_ptr);
                 const char* algo = (kem_type == nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024)
                                    ? "Hybrid X25519+ML-KEM-1024" : "ML-KEM-1024";
-                std::cout << "Encrypted (" << algo << ") -> " << out << " (" << pkt.size() << " bytes)\n";
+                std::cout << "Encrypted (" << algo
+                          << (pqc_ptr ? std::string(" + ") + nocturne::pqc::sig_type_to_string(pqc_ptr->type) : "")
+                          << ") -> " << out << " (" << pkt.size() << " bytes)\n";
             }
             write_all(out, pkt);
             return 0;
@@ -2924,6 +3002,8 @@ int main(int argc, char** argv) {
         if (cmd == "decrypt") {
             std::filesystem::path rxpk, rxsk, in, out, replaydb_path, mac_key_path;
             std::string expectpk_path;
+            std::filesystem::path expect_pqc_pk_path;
+            std::string expect_pqc_sig_str;
             std::optional<uint32_t> min_rotation = std::nullopt;
             for (int i=2;i<argc;++i) {
                 std::string a = argv[i];
@@ -2944,6 +3024,8 @@ int main(int argc, char** argv) {
                 else if (a=="--out") out = need(1);
                 else if (a=="--replay-db") replaydb_path = need(1);
                 else if (a=="--mac-key") mac_key_path = need(1);
+                else if (a=="--expect-pqc-signer") expect_pqc_pk_path = need(1);
+                else if (a=="--pqc-sig-type") expect_pqc_sig_str = need(1);
                 else throw std::runtime_error("unknown arg: " + a);
             }
             if (rxpk.empty() || rxsk.empty() || in.empty() || out.empty()) throw std::runtime_error("missing required args");
@@ -2955,6 +3037,34 @@ int main(int argc, char** argv) {
                 if (e.size()!=crypto_sign_PUBLICKEYBYTES) throw std::runtime_error("expected signer pk size mismatch");
                 std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> tmp{}; std::memcpy(tmp.data(), e.data(), tmp.size()); expectpk_arr = tmp;
             }
+
+            // Optional PQC verifier: --expect-pqc-signer + --pqc-sig-type. Both
+            // must be set together. Public-key size is enforced against the
+            // factory's reported size for the chosen SigType.
+            std::optional<nocturne::PqcVerifierConfig> pqc_verifier_cfg;
+            if (!expect_pqc_pk_path.empty() || !expect_pqc_sig_str.empty()) {
+                if (expect_pqc_pk_path.empty() || expect_pqc_sig_str.empty()) {
+                    throw std::runtime_error("--expect-pqc-signer and --pqc-sig-type must both be set");
+                }
+                nocturne::pqc::SigType st;
+                if      (expect_pqc_sig_str == "ed25519") st = nocturne::pqc::SigType::CLASSIC_ED25519;
+                else if (expect_pqc_sig_str == "hybrid")  st = nocturne::pqc::SigType::HYBRID_ED25519_MLDSA87;
+                else if (expect_pqc_sig_str == "mldsa")   st = nocturne::pqc::SigType::PURE_MLDSA87;
+                else throw std::runtime_error("unknown --pqc-sig-type: " + expect_pqc_sig_str);
+
+                auto pk_bytes = read_all(expect_pqc_pk_path);
+                auto scheme = nocturne::pqc::SignatureFactory{}.create(st);
+                if (pk_bytes.size() != scheme->public_key_size()) {
+                    throw std::runtime_error(
+                        "--expect-pqc-signer pk size mismatch (expected " +
+                        std::to_string(scheme->public_key_size()) + " for " +
+                        scheme->algorithm_name() + ", got " +
+                        std::to_string(pk_bytes.size()) + ")");
+                }
+                pqc_verifier_cfg = nocturne::PqcVerifierConfig{st, std::move(pk_bytes)};
+            }
+            const nocturne::PqcVerifierConfig* pqc_vptr =
+                pqc_verifier_cfg.has_value() ? &*pqc_verifier_cfg : nullptr;
 
             std::optional<std::filesystem::path> mac_key = mac_key_path.empty()?std::nullopt:std::optional<std::filesystem::path>(mac_key_path);
             ReplayDB rdb(replaydb_path.empty()?std::filesystem::path(std::string(std::getenv("HOME")?std::getenv("HOME"):".")) / ".nocturne" / "replaydb.bin": replaydb_path, mac_key, opt_tpm_counter);
@@ -2976,12 +3086,18 @@ int main(int argc, char** argv) {
                 std::array<uint8_t, crypto_kx_SECRETKEYBYTES> rxsk_arr{};
                 std::memcpy(rxpk_arr.data(), rxpk_b.data(), rxpk_arr.size());
                 std::memcpy(rxsk_arr.data(), rxsk_b.data(), rxsk_arr.size());
-                pt = decrypt_packet(rxpk_arr, rxsk_arr, pkt, expectpk_arr, rdbp, min_rotation);
-                std::cout << "Decrypted (X25519) -> " << out << " (" << pt.size() << " bytes)\n";
+                pt = decrypt_packet(rxpk_arr, rxsk_arr, pkt, expectpk_arr, rdbp,
+                                    min_rotation, "", pqc_vptr);
+                std::cout << "Decrypted (X25519"
+                          << (pqc_vptr ? std::string(" + ") + nocturne::pqc::sig_type_to_string(pqc_vptr->type) + " verified" : "")
+                          << ") -> " << out << " (" << pt.size() << " bytes)\n";
             } else {
                 // KEMFactory + size validation happens inside decrypt_packet_kem.
-                pt = decrypt_packet_kem(rxpk_b, rxsk_b, pkt, expectpk_arr, rdbp, min_rotation);
-                std::cout << "Decrypted (PQC/KEM) -> " << out << " (" << pt.size() << " bytes)\n";
+                pt = decrypt_packet_kem(rxpk_b, rxsk_b, pkt, expectpk_arr, rdbp,
+                                        min_rotation, "", pqc_vptr);
+                std::cout << "Decrypted (PQC/KEM"
+                          << (pqc_vptr ? std::string(" + ") + nocturne::pqc::sig_type_to_string(pqc_vptr->type) + " verified" : "")
+                          << ") -> " << out << " (" << pt.size() << " bytes)\n";
             }
             write_all(out, pt);
             return 0;
