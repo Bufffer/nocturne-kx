@@ -15,6 +15,8 @@
 #include "../../src/core/error.hpp"
 #include "../../src/core/result.hpp"
 #include "../../src/core/byte_span.hpp"
+#include "../../src/core/flags.hpp"
+#include "../../src/core/types.hpp"
 
 #include <array>
 #include <cstdint>
@@ -24,17 +26,26 @@
 
 using nocturne::Bytes;
 using nocturne::BytesView;
+using nocturne::Ed25519KeyPair;
 using nocturne::Error;
 using nocturne::ErrorCode;
+using nocturne::Flag;
+using nocturne::HSMError;
 using nocturne::MutableBytesView;
+using nocturne::NocturneError;
 using nocturne::Result;
 using nocturne::Status;
-using nocturne::as_view;
+using nocturne::X25519KeyPair;
 using nocturne::as_mut_view;
+using nocturne::as_view;
 using nocturne::category;
 using nocturne::err;
+using nocturne::flag_from_byte;
+using nocturne::has_all;
+using nocturne::has_any;
 using nocturne::ok;
 using nocturne::to_string_view;
+using nocturne::to_underlying;
 
 TEST_CASE("ErrorCode names are stable and complete", "[foundation]") {
     // Sample one entry per category to catch any switch fall-through.
@@ -178,6 +189,61 @@ Result<Bytes> validate(Bytes packet) {
     return packet;
 }
 }  // namespace
+
+TEST_CASE("Flag bitwise operators round-trip the wire values", "[foundation]") {
+    SECTION("legacy numeric aliases preserved for backward compat") {
+        REQUIRE(to_underlying(Flag::HasSig)     == 0x01);
+        REQUIRE(to_underlying(Flag::HasRatchet) == 0x02);
+        REQUIRE(to_underlying(Flag::HasPqcKem)  == 0x04);
+        REQUIRE(to_underlying(Flag::HasPqcSig)  == 0x08);
+    }
+
+    SECTION("operator|, operator& compose multi-flag values") {
+        Flag both = Flag::HasSig | Flag::HasPqcKem;
+        REQUIRE(to_underlying(both) == 0x05);
+
+        REQUIRE(has_any(both, Flag::HasSig));
+        REQUIRE(has_any(both, Flag::HasPqcKem));
+        REQUIRE_FALSE(has_any(both, Flag::HasRatchet));
+        REQUIRE(has_all(both, Flag::HasSig | Flag::HasPqcKem));
+        REQUIRE_FALSE(has_all(both, Flag::HasSig | Flag::HasRatchet));
+    }
+
+    SECTION("operator~ and operator^ clear / toggle bits") {
+        Flag f = Flag::HasSig | Flag::HasPqcSig;
+        f &= ~Flag::HasSig;
+        REQUIRE_FALSE(has_any(f, Flag::HasSig));
+        REQUIRE(has_any(f, Flag::HasPqcSig));
+
+        f ^= Flag::HasPqcSig;
+        REQUIRE(f == Flag::None);
+    }
+
+    SECTION("flag_from_byte preserves unknown bits") {
+        Flag f = flag_from_byte(0xF0);  // no defined bit set in 0xF0
+        REQUIRE(to_underlying(f) == 0xF0);
+    }
+}
+
+TEST_CASE("Key pair structs have the libsodium-defined sizes", "[foundation]") {
+    X25519KeyPair kp{};
+    REQUIRE(kp.pk.size() == 32);
+    REQUIRE(kp.sk.size() == 32);
+
+    Ed25519KeyPair ed{};
+    REQUIRE(ed.pk.size() == 32);
+    REQUIRE(ed.sk.size() == 64);
+}
+
+TEST_CASE("Exception hierarchy: HSMError isa NocturneError", "[foundation]") {
+    try {
+        throw HSMError{"pkcs11 unreachable"};
+    } catch (const NocturneError& e) {
+        REQUIRE(std::string{e.what()} == "pkcs11 unreachable");
+    } catch (...) {
+        FAIL("HSMError did not propagate through NocturneError catch");
+    }
+}
 
 TEST_CASE("Composed pipeline example", "[foundation]") {
     SECTION("happy") {

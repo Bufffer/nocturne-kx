@@ -330,17 +330,20 @@ if(BUILD_TESTS)
         )
         add_test(NAME side-channel-test COMMAND side-channel-test)
 
-        # Foundation tests (P5.0) — error.hpp / result.hpp / byte_span.hpp.
-        # Header-only, no library deps; the test target exists primarily
-        # to force CI compilation of the new C++23 <expected> + <span>
-        # surface and prove the runner image's libstdc++ supports them.
+        # Foundation tests (P5.0/P5.1) — error/result/byte_span/flags/types.
+        # types.hpp pulls in <sodium.h> for the libsodium-derived KeyPair
+        # sizes (crypto_kx_*BYTES, crypto_sign_*BYTES), so the test
+        # target needs the sodium link even though the headers don't
+        # call any sodium function directly.
         add_executable(core-foundation-test
             tests/core/test_error_result.cpp
         )
         target_link_libraries(core-foundation-test PRIVATE
             Catch2::Catch2WithMain
+            ${SODIUM_LIBRARIES}
         )
         target_include_directories(core-foundation-test PRIVATE
+            ${SODIUM_INCLUDE_DIRS}
             ${CMAKE_CURRENT_SOURCE_DIR}/src
         )
         add_test(NAME core-foundation-test COMMAND core-foundation-test)

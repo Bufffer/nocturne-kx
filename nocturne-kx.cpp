@@ -46,6 +46,16 @@
 #include "src/pqc/kem/kem_factory.hpp"
 #include "src/pqc/sig/sig_factory.hpp"
 #include "src/pqc/pqc_config.hpp"
+
+// P5.0–P5.1 foundation: type-safe error path, byte-buffer views, flag
+// bitmask, and shared value types. The legacy definitions that used to
+// live in this file have moved into src/core/ and are pulled back in
+// here for the rest of nocturne-kx.cpp to consume unchanged.
+#include "src/core/error.hpp"
+#include "src/core/result.hpp"
+#include "src/core/byte_span.hpp"
+#include "src/core/flags.hpp"
+#include "src/core/types.hpp"
 #include <iomanip>
 
 // Platform-specific headers for memory protection
@@ -1152,56 +1162,10 @@ namespace memory_protection {
 
 namespace nocturne {
 
-// SECURITY CONSTANTS
-constexpr uint8_t VERSION = 0x03;
-constexpr uint8_t FLAG_HAS_SIG = 0x01;
-constexpr uint8_t FLAG_HAS_RATCHET = 0x02;
-// When set, eph_pk is unused (zeroed) and the receiver derives the AEAD key
-// by decapsulating pqc_kem_ct via KEMFactory(pqc_kem_type) with the receiver's
-// KEM secret key. Used by hybrid X25519+ML-KEM-1024 and pure ML-KEM-1024 modes.
-constexpr uint8_t FLAG_HAS_PQC_KEM = 0x04;
-// Maximum KEM ciphertext size we accept (hybrid is 1601B; cap conservatively at
-// 4 KiB to leave headroom for future schemes while bounding DoS exposure).
-constexpr size_t MAX_PQC_KEM_CT_SIZE = 4 * 1024;
-// FLAG_HAS_PQC_SIG carries a *variable-size* signature whose layout differs
-// from the fixed 64-byte FLAG_HAS_SIG path. When set, the wire carries:
-//   [1B pqc_sig_type][4B LE pqc_sig_len][N bytes pqc_sig]
-// after the ciphertext block, where pqc_sig_type matches
-// nocturne::pqc::SigType (0=Ed25519, 1=Hybrid Ed25519+ML-DSA-87, 2=ML-DSA-87).
-// FLAG_HAS_SIG and FLAG_HAS_PQC_SIG are mutually exclusive in practice; the
-// serializer permits both for forward compat (FLAG_HAS_PQC_SIG block first,
-// then the 64-byte FLAG_HAS_SIG block).
-constexpr uint8_t FLAG_HAS_PQC_SIG = 0x08;
-// Cap at 8 KiB — hybrid Ed25519+ML-DSA-87 is 4691 B; leaves headroom for
-// SLH-DSA or future signature variants while bounding allocation amplification.
-constexpr size_t MAX_PQC_SIG_SIZE = 8 * 1024;
-
-using Bytes = std::vector<uint8_t>;
-
-// Custom exception hierarchy for clearer error classification
-class NocturneError : public std::runtime_error {
-public:
-    explicit NocturneError(const std::string& msg) : std::runtime_error(msg) {}
-};
-
-class HSMError : public NocturneError { public: explicit HSMError(const std::string& m) : NocturneError(m) {} };
-class CryptoError : public NocturneError { public: explicit CryptoError(const std::string& m) : NocturneError(m) {} };
-class IOError : public NocturneError { public: explicit IOError(const std::string& m) : NocturneError(m) {} };
-
-
-struct X25519KeyPair {
-    std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> pk{};
-    std::array<uint8_t, crypto_kx_SECRETKEYBYTES> sk{};
-};
-
-struct Ed25519KeyPair {
-    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> pk{};
-    std::array<uint8_t, crypto_sign_SECRETKEYBYTES> sk{};
-};
-
-inline void check_sodium() {
-    if (sodium_init() < 0) throw std::runtime_error("sodium_init failed");
-}
+// Constants, exception hierarchy, key-pair types, and check_sodium()
+// all moved to src/core/{flags,types,byte_span,error,result}.hpp in
+// P5.0–P5.1. The names below remain reachable through this namespace
+// because the foundation headers declare them in namespace nocturne.
 
 inline X25519KeyPair gen_x25519() {
     // Use secure memory for key generation
