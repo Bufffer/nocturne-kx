@@ -245,16 +245,20 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Install dependencies
-      # clang-19 is the newest Clang in Ubuntu 24.04 noble repos. clang-15
-      # cannot parse libstdc++ 14's <ranges>/<concepts> headers — we hit
-      # the same family of failures the c9057c4 / 75e149d series chased
-      # when libstdc++ moved forward but clang stayed pinned.
+      # clang-19 + libstdc++-14-dev: the latest Clang in Ubuntu 24.04
+      # noble repos paired with GCC-14's libstdc++ headers. GCC-13's
+      # libstdc++ ships <expected> as a stub gated on a draft-version
+      # check that doesn't match clang's __cplusplus value, so the P5.0
+      # Result<T> foundation fails to compile until we bring in
+      # libstdc++-14's properly enabled <expected>.
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           libsodium-dev \
           pkg-config \
           cmake \
+          g++-14 \
+          libstdc++-14-dev \
           clang-19 \
           ninja-build
 
