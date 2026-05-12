@@ -70,6 +70,7 @@
 #include "src/hsm/inline/hsm_interface.hpp"
 #include "src/hsm/inline/file_hsm.hpp"
 #include "src/hsm/inline/pkcs11_adapter.hpp"
+#include "src/protocol/packet_io.hpp"
 #include <iomanip>
 
 // Platform-specific headers for memory protection
@@ -289,52 +290,10 @@ nocturne::Bytes encrypt_packet(
     p.ciphertext = aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
 
     if (signer) {
-        // Verify HSM health before signing
-        if (!signer->is_healthy()) {
-            throw std::runtime_error("HSM is not healthy");
-        }
-
-        // Build canonical bytes without signature flag or field
-        Packet unsigned_p = p;
-        unsigned_p.flags &= ~FLAG_HAS_SIG;
-        unsigned_p.signature = std::nullopt;
-
-        Bytes to_sign;
-        auto ser_without_sig = serialize(unsigned_p);
-        to_sign.insert(to_sign.end(), ser_without_sig.begin(), ser_without_sig.end());
-
-        // Add session ID to signed data if provided
-        if (!session_id.empty()) {
-            to_sign.insert(to_sign.end(), session_id.begin(), session_id.end());
-        }
-
-        auto sig = signer->sign(to_sign.data(), to_sign.size());
-        p.flags |= FLAG_HAS_SIG;
-        p.signature = sig;
+        nocturne::packet_io::attach_classical_signature(p, *signer, session_id);
     }
-
     if (pqc_signer) {
-        // Canonical signing region: serialize the packet *without* any
-        // signature flags or bytes, then append session_id if bound. This
-        // mirrors the classical Ed25519 path so the two stay verifiable
-        // through identical canonical-bytes logic.
-        Packet unsigned_p = p;
-        unsigned_p.flags &= ~(FLAG_HAS_SIG | FLAG_HAS_PQC_SIG);
-        unsigned_p.signature = std::nullopt;
-        unsigned_p.pqc_sig.clear();
-        unsigned_p.pqc_sig_type = 0;
-
-        Bytes to_sign = serialize(unsigned_p);
-        if (!session_id.empty()) {
-            to_sign.insert(to_sign.end(), session_id.begin(), session_id.end());
-        }
-
-        auto scheme = nocturne::pqc::SignatureFactory{}.create(pqc_signer->type);
-        auto sig = scheme->sign(to_sign.data(), to_sign.size(), pqc_signer->secret_key);
-
-        p.flags |= FLAG_HAS_PQC_SIG;
-        p.pqc_sig_type = static_cast<uint8_t>(pqc_signer->type);
-        p.pqc_sig = std::move(sig.bytes);
+        nocturne::packet_io::attach_pqc_signature(p, *pqc_signer, session_id);
     }
 
     auto out = serialize(p);
@@ -375,73 +334,11 @@ nocturne::Bytes decrypt_packet(
     Packet p = nocturne::deserialize(packet_bytes);
 
     if (opt_expected_signer_ed25519_pk.has_value()) {
-        if (!(p.flags & FLAG_HAS_SIG) || !p.signature) 
-            throw std::runtime_error("missing required signature");
-        
-        Bytes signed_region;
-        auto ser_no_sig = serialize(Packet{
-            .version = p.version,
-            .flags   = static_cast<uint8_t>(p.flags & ~FLAG_HAS_SIG),
-            .rotation_id = p.rotation_id,
-            .eph_pk  = p.eph_pk,
-            .nonce   = p.nonce,
-            .counter = p.counter,
-            .ratchet_pk = p.ratchet_pk,
-            .pqc_kem_type = p.pqc_kem_type,
-            .pqc_kem_ct = p.pqc_kem_ct,
-            .aad     = p.aad,
-            .ciphertext = p.ciphertext,
-            .signature  = std::nullopt,
-            .pqc_sig_type = p.pqc_sig_type,
-            .pqc_sig = p.pqc_sig,
-        });
-        signed_region.insert(signed_region.end(), ser_no_sig.begin(), ser_no_sig.end());
-
-        // Add session ID to verification if provided
-        if (!session_id.empty()) {
-            signed_region.insert(signed_region.end(), session_id.begin(), session_id.end());
-        }
-
-        if (!ed25519_verify(signed_region, *opt_expected_signer_ed25519_pk, *p.signature))
-            throw std::runtime_error("signature verification failed");
+        nocturne::packet_io::verify_classical_signature(
+            p, *opt_expected_signer_ed25519_pk, session_id);
     }
-
     if (pqc_verifier) {
-        if (!(p.flags & FLAG_HAS_PQC_SIG) || p.pqc_sig.empty())
-            throw std::runtime_error("missing required pqc signature");
-        if (p.pqc_sig_type != static_cast<uint8_t>(pqc_verifier->type))
-            throw std::runtime_error("pqc sig type mismatch");
-
-        // Canonical signing region — must match encrypt_packet's PQC branch:
-        // serialize with BOTH FLAG_HAS_SIG and FLAG_HAS_PQC_SIG cleared.
-        Bytes signed_region = serialize(Packet{
-            .version = p.version,
-            .flags   = static_cast<uint8_t>(p.flags & ~(FLAG_HAS_SIG | FLAG_HAS_PQC_SIG)),
-            .rotation_id = p.rotation_id,
-            .eph_pk  = p.eph_pk,
-            .nonce   = p.nonce,
-            .counter = p.counter,
-            .ratchet_pk = p.ratchet_pk,
-            .pqc_kem_type = p.pqc_kem_type,
-            .pqc_kem_ct = p.pqc_kem_ct,
-            .aad     = p.aad,
-            .ciphertext = p.ciphertext,
-            .signature  = std::nullopt,
-            .pqc_sig_type = 0,
-            .pqc_sig = {},
-        });
-        if (!session_id.empty()) {
-            signed_region.insert(signed_region.end(), session_id.begin(), session_id.end());
-        }
-
-        auto scheme = nocturne::pqc::SignatureFactory{}.create(pqc_verifier->type);
-        nocturne::pqc::Signature sig_in;
-        sig_in.type  = pqc_verifier->type;
-        sig_in.bytes = p.pqc_sig;
-        if (!scheme->verify(signed_region.data(), signed_region.size(),
-                            sig_in, pqc_verifier->public_key)) {
-            throw std::runtime_error("pqc signature verification failed");
-        }
+        nocturne::packet_io::verify_pqc_signature(p, *pqc_verifier, session_id);
     }
 
     if (min_rotation_id.has_value()) {
@@ -571,37 +468,10 @@ nocturne::Bytes encrypt_packet_kem(
     p.ciphertext = aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
 
     if (signer) {
-        if (!signer->is_healthy()) throw std::runtime_error("HSM is not healthy");
-        Packet unsigned_p = p;
-        unsigned_p.flags &= ~FLAG_HAS_SIG;
-        unsigned_p.signature = std::nullopt;
-        Bytes to_sign = serialize(unsigned_p);
-        if (!session_id.empty()) {
-            to_sign.insert(to_sign.end(), session_id.begin(), session_id.end());
-        }
-        auto sig = signer->sign(to_sign.data(), to_sign.size());
-        p.flags |= FLAG_HAS_SIG;
-        p.signature = sig;
+        nocturne::packet_io::attach_classical_signature(p, *signer, session_id);
     }
-
     if (pqc_signer) {
-        Packet unsigned_p = p;
-        unsigned_p.flags &= ~(FLAG_HAS_SIG | FLAG_HAS_PQC_SIG);
-        unsigned_p.signature = std::nullopt;
-        unsigned_p.pqc_sig.clear();
-        unsigned_p.pqc_sig_type = 0;
-
-        Bytes to_sign = serialize(unsigned_p);
-        if (!session_id.empty()) {
-            to_sign.insert(to_sign.end(), session_id.begin(), session_id.end());
-        }
-
-        auto scheme = nocturne::pqc::SignatureFactory{}.create(pqc_signer->type);
-        auto sig = scheme->sign(to_sign.data(), to_sign.size(), pqc_signer->secret_key);
-
-        p.flags |= FLAG_HAS_PQC_SIG;
-        p.pqc_sig_type = static_cast<uint8_t>(pqc_signer->type);
-        p.pqc_sig = std::move(sig.bytes);
+        nocturne::packet_io::attach_pqc_signature(p, *pqc_signer, session_id);
     }
 
     auto out = serialize(p);
@@ -656,43 +526,11 @@ nocturne::Bytes decrypt_packet_kem(
     }
 
     if (opt_expected_signer_ed25519_pk.has_value()) {
-        if (!(p.flags & FLAG_HAS_SIG) || !p.signature)
-            throw std::runtime_error("missing required signature");
-        Packet unsigned_p = p;
-        unsigned_p.flags &= ~FLAG_HAS_SIG;
-        unsigned_p.signature = std::nullopt;
-        Bytes signed_region = serialize(unsigned_p);
-        if (!session_id.empty()) {
-            signed_region.insert(signed_region.end(), session_id.begin(), session_id.end());
-        }
-        if (!ed25519_verify(signed_region, *opt_expected_signer_ed25519_pk, *p.signature))
-            throw std::runtime_error("signature verification failed");
+        nocturne::packet_io::verify_classical_signature(
+            p, *opt_expected_signer_ed25519_pk, session_id);
     }
-
     if (pqc_verifier) {
-        if (!(p.flags & FLAG_HAS_PQC_SIG) || p.pqc_sig.empty())
-            throw std::runtime_error("missing required pqc signature");
-        if (p.pqc_sig_type != static_cast<uint8_t>(pqc_verifier->type))
-            throw std::runtime_error("pqc sig type mismatch");
-
-        Packet unsigned_p = p;
-        unsigned_p.flags &= ~(FLAG_HAS_SIG | FLAG_HAS_PQC_SIG);
-        unsigned_p.signature = std::nullopt;
-        unsigned_p.pqc_sig.clear();
-        unsigned_p.pqc_sig_type = 0;
-        Bytes signed_region = serialize(unsigned_p);
-        if (!session_id.empty()) {
-            signed_region.insert(signed_region.end(), session_id.begin(), session_id.end());
-        }
-
-        auto scheme = nocturne::pqc::SignatureFactory{}.create(pqc_verifier->type);
-        nocturne::pqc::Signature sig_in;
-        sig_in.type  = pqc_verifier->type;
-        sig_in.bytes = p.pqc_sig;
-        if (!scheme->verify(signed_region.data(), signed_region.size(),
-                            sig_in, pqc_verifier->public_key)) {
-            throw std::runtime_error("pqc signature verification failed");
-        }
+        nocturne::packet_io::verify_pqc_signature(p, *pqc_verifier, session_id);
     }
 
     if (min_rotation_id.has_value() && p.rotation_id < *min_rotation_id) {
