@@ -66,6 +66,10 @@
 #include "src/security/inline/memory_protection.hpp"
 #include "src/security/inline/replay_db.hpp"
 #include "src/core/file_io.hpp"
+#include "src/hsm/inline/secure_storage.hpp"
+#include "src/hsm/inline/hsm_interface.hpp"
+#include "src/hsm/inline/file_hsm.hpp"
+#include "src/hsm/inline/pkcs11_adapter.hpp"
 #include <iomanip>
 
 // Platform-specific headers for memory protection
@@ -80,48 +84,7 @@
 
 #include <sodium.h>
 // ----- FileHSM secure storage helpers (passphrase-based at-rest encryption) -----
-namespace filehsm_secure_storage {
-    static constexpr const char* MAGIC = "NCHSM2"; // simple magic header
-    static constexpr size_t MAGIC_LEN = 6;
-    static constexpr size_t SALT_LEN = 16;
-
-    inline bool looks_encrypted(const std::vector<uint8_t>& blob) {
-        return blob.size() > MAGIC_LEN && std::memcmp(blob.data(), MAGIC, MAGIC_LEN) == 0;
-    }
-
-    inline std::optional<std::array<uint8_t, crypto_sign_SECRETKEYBYTES>>
-    decrypt_sk_with_passphrase(const std::vector<uint8_t>& blob) {
-        if (!looks_encrypted(blob)) return std::nullopt;
-        const uint8_t* p = blob.data() + MAGIC_LEN;
-        size_t rem = blob.size() - MAGIC_LEN;
-        if (rem < SALT_LEN + crypto_aead_xchacha20poly1305_ietf_NPUBBYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES)
-            throw std::runtime_error("FileHSM: encrypted blob truncated");
-        std::array<uint8_t, SALT_LEN> salt{}; std::memcpy(salt.data(), p, SALT_LEN); p += SALT_LEN; rem -= SALT_LEN;
-        std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES> npub{}; std::memcpy(npub.data(), p, npub.size()); p += npub.size(); rem -= npub.size();
-        std::vector<uint8_t> ct(p, p + rem);
-
-        const char* pass = std::getenv("NOCTURNE_HSM_PASSPHRASE");
-        if (!pass || std::strlen(pass) == 0) throw std::runtime_error("FileHSM: NOCTURNE_HSM_PASSPHRASE not set for encrypted key");
-
-        std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> k{};
-        if (crypto_pwhash(k.data(), k.size(), pass, std::strlen(pass), salt.data(),
-                          crypto_pwhash_OPSLIMIT_INTERACTIVE, crypto_pwhash_MEMLIMIT_INTERACTIVE, crypto_pwhash_ALG_DEFAULT) != 0) {
-            throw std::runtime_error("FileHSM: key derivation failed");
-        }
-
-        if (ct.size() != crypto_sign_SECRETKEYBYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES)
-            throw std::runtime_error("FileHSM: encrypted payload size invalid");
-
-        std::array<uint8_t, crypto_sign_SECRETKEYBYTES> sk{};
-        unsigned long long pt_len = 0;
-        if (crypto_aead_xchacha20poly1305_ietf_decrypt(sk.data(), &pt_len, nullptr,
-                ct.data(), ct.size(), nullptr, 0, npub.data(), k.data()) != 0) {
-            throw std::runtime_error("FileHSM: decryption failed");
-        }
-        if (pt_len != crypto_sign_SECRETKEYBYTES) throw std::runtime_error("FileHSM: decrypted length mismatch");
-        return sk;
-    }
-}
+// filehsm_secure_storage moved to src/hsm/inline/secure_storage.hpp in P5.5.
 
 // Platform-specific headers for side-channel protection
 #if defined(__x86_64__) || defined(__i386__)
@@ -257,204 +220,9 @@ static std::string hexify(const uint8_t* p, size_t n) {
     return s;
 }
 
-// Enhanced HSM interface with additional security features
-struct HSMInterface {
-    // Core signing interface
-    virtual std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) = 0;
-    
-    // Key management
-    virtual std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() = 0;
-    virtual bool has_key(const std::string& label) = 0;
-    
-    // Random number generation
-    virtual std::vector<uint8_t> generate_random(size_t length) = 0;
-    
-    // Health check
-    virtual bool is_healthy() = 0;
-    
-    virtual ~HSMInterface() = default;
-};
-
-// Enhanced FileHSM with additional security features
-class FileHSM : public HSMInterface {
-    memory_protection::SecureMemory<uint8_t> secure_sk_;
-    memory_protection::SecureMemory<uint8_t> secure_pk_;
-    bool initialized_{false};
-    
-public:
-    FileHSM(const std::filesystem::path &path) 
-        : secure_sk_(crypto_sign_SECRETKEYBYTES),
-          secure_pk_(crypto_sign_PUBLICKEYBYTES) {
-
-        std::vector<uint8_t> b;
-        try {
-            b = read_all(path);
-        } catch (const std::exception& e) {
-            throw nocturne::IOError(std::string("FileHSM: failed to read key file: ") + e.what());
-        }
-
-        // Support encrypted at-rest secret keys if header present
-        try {
-            if (auto dec = filehsm_secure_storage::decrypt_sk_with_passphrase(b)) {
-                std::memcpy(secure_sk_.get(), dec->data(), crypto_sign_SECRETKEYBYTES);
-            } else {
-                if (b.size() != crypto_sign_SECRETKEYBYTES)
-                    throw nocturne::HSMError("filehsm sk size mismatch");
-                std::memcpy(secure_sk_.get(), b.data(), crypto_sign_SECRETKEYBYTES);
-            }
-        } catch (const std::exception& e) {
-            throw nocturne::HSMError(std::string("FileHSM: failed to load/decrypt key: ") + e.what());
-        }
-
-        // Derive public key from secret key in secure memory
-        if (crypto_sign_ed25519_sk_to_pk(secure_pk_.get(), secure_sk_.get()) != 0)
-            throw nocturne::CryptoError("failed to derive public key from secret key");
-
-        initialized_ = true;
-    }
-    
-    std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
-        if (!initialized_) throw nocturne::HSMError("FileHSM not initialized");
-        nocturne::Bytes msg(data, data+len);
-
-        // Create temporary array for signing (will be zeroed automatically)
-        std::array<uint8_t, crypto_sign_SECRETKEYBYTES> temp_sk{};
-        std::memcpy(temp_sk.data(), secure_sk_.get(), crypto_sign_SECRETKEYBYTES);
-
-        // Use deterministic Ed25519 signing (RFC8032) already provided by libsodium detached API
-        std::array<uint8_t, crypto_sign_BYTES> sig = nocturne::ed25519_sign(msg, temp_sk);
-
-        // Zero the temporary array
-        nocturne::side_channel::secure_zero_memory(temp_sk.data(), temp_sk.size());
-
-        return sig;
-    }
-    
-    std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() override {
-        if (!initialized_) return std::nullopt;
-        
-        std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> temp_pk;
-        std::memcpy(temp_pk.data(), secure_pk_.get(), crypto_sign_PUBLICKEYBYTES);
-        return temp_pk;
-    }
-    
-    bool has_key(const std::string& label) override {
-        return initialized_ && label == "default";
-    }
-    
-    std::vector<uint8_t> generate_random(size_t length) override {
-        std::vector<uint8_t> random(length);
-        randombytes_buf(random.data(), length);
-        return random;
-    }
-    
-    bool is_healthy() override {
-        return initialized_;
-    }
-    
-    ~FileHSM() {
-        // SecureMemory destructor automatically handles secure cleanup
-        // No manual cleanup needed - memory is automatically zeroed and freed
-    }
-};
-
-// HSM INTEGRATION: PKCS#11 adapter
-//
-// Bridges the CLI-facing inline HSMInterface (defined in this file) to the
-// production-grade nocturne::hsm::PKCS11HSM in src/hsm/pkcs11_hsm.hpp.
-//
-// Configuration via environment variables:
-//   PKCS11_LIB          - absolute path to PKCS#11 module (.so/.dll). REQUIRED.
-//   NOCTURNE_HSM_PIN    - user PIN for C_Login (optional but needed for sign).
-//                         The PIN buffer is securely zeroed after authentication.
-//   NOCTURNE_HSM_FIPS   - "1" to require FIPS mode (default: 0).
-//
-// CLI URI: hsm://<token_label>:<key_label>
-class PKCS11HSM : public HSMInterface {
-private:
-    std::string token_id_;
-    std::string key_label_;
-    std::unique_ptr<nocturne::hsm::PKCS11HSM> impl_;
-
-    static std::string env_or_empty(const char* name) {
-        const char* v = std::getenv(name);
-        return v ? std::string(v) : std::string();
-    }
-
-public:
-    PKCS11HSM(const std::string& token_id, const std::string& key_label)
-        : token_id_(token_id), key_label_(key_label) {
-        if (token_id.empty()) {
-            throw nocturne::HSMError("HSM token ID cannot be empty");
-        }
-        if (key_label.empty()) {
-            throw nocturne::HSMError("HSM key label cannot be empty");
-        }
-
-        std::string lib_path = env_or_empty("PKCS11_LIB");
-        if (lib_path.empty()) {
-            throw nocturne::HSMError(
-                "PKCS#11 library path not configured: set PKCS11_LIB env var "
-                "(e.g. /usr/lib/softhsm/libsofthsm2.so)");
-        }
-
-        bool require_fips = env_or_empty("NOCTURNE_HSM_FIPS") == "1";
-
-        try {
-            impl_ = std::make_unique<nocturne::hsm::PKCS11HSM>(
-                lib_path, token_id_, key_label_, require_fips);
-        } catch (const std::exception& e) {
-            throw nocturne::HSMError(std::string("PKCS#11 init failed: ") + e.what());
-        }
-
-        // Optional authentication via env var (PIN buffer is zeroed inside authenticate()).
-        std::string pin = env_or_empty("NOCTURNE_HSM_PIN");
-        if (!pin.empty()) {
-            std::string pin_copy = pin; // mutable copy for authenticate()
-            // Best-effort scrub of the env-derived buffer too.
-            nocturne::side_channel::secure_zero_memory(
-                pin.data(), pin.size());
-            if (!impl_->authenticate(pin_copy)) {
-                throw nocturne::HSMError("PKCS#11 C_Login failed (check PIN/lockout)");
-            }
-        }
-    }
-
-    ~PKCS11HSM() override {
-        if (impl_) {
-            try { impl_->logout(); } catch (...) { /* dtor silent */ }
-        }
-        // unique_ptr destruction handles C_Finalize + library unload.
-    }
-
-    std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
-        if (!impl_) throw nocturne::HSMError("PKCS#11 HSM not initialized");
-        return impl_->sign(data, len);
-    }
-
-    std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() override {
-        if (!impl_) return std::nullopt;
-        return impl_->get_public_key();
-    }
-
-    bool has_key(const std::string& label) override {
-        return impl_ && impl_->has_key(label);
-    }
-
-    std::vector<uint8_t> generate_random(size_t length) override {
-        if (!impl_) {
-            // Fallback to libsodium if HSM not available.
-            std::vector<uint8_t> random(length);
-            randombytes_buf(random.data(), length);
-            return random;
-        }
-        return impl_->generate_random(length);
-    }
-
-    bool is_healthy() override {
-        return impl_ && impl_->is_healthy();
-    }
-};
+// HSMInterface, FileHSM, PKCS11HSM moved to src/hsm/inline/{hsm_interface,
+// file_hsm, pkcs11_adapter}.hpp in P5.5. Types stay at global scope so
+// existing CLI call sites compile unchanged.
 
 // Enhanced high-level encrypt/decrypt with comprehensive security features
 nocturne::Bytes encrypt_packet(
