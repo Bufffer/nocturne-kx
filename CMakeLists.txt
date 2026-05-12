@@ -202,6 +202,7 @@ set(NOCTURNE_CORE_SOURCES
     src/protocol/packet.cpp
     src/security/inline/rate_limiter.cpp
     src/security/inline/audit_logger.cpp
+    src/security/inline/memory_protection.cpp
     src/pqc/kem/kem_interface.cpp
     src/pqc/kem/kem_factory.cpp
     src/pqc/sig/sig_interface.cpp
@@ -271,6 +272,7 @@ if(BUILD_TESTS)
             src/protocol/packet.cpp
             src/security/inline/rate_limiter.cpp
             src/security/inline/audit_logger.cpp
+            src/security/inline/memory_protection.cpp
             src/pqc/kem/kem_interface.cpp
             src/pqc/kem/kem_factory.cpp
             src/pqc/sig/sig_interface.cpp
