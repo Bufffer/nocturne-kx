@@ -199,10 +199,12 @@ set(NOCTURNE_CORE_SOURCES
     src/handshake.hpp
     src/transport.hpp
     src/core/side_channel.cpp
+    src/core/file_io.cpp
     src/protocol/packet.cpp
     src/security/inline/rate_limiter.cpp
     src/security/inline/audit_logger.cpp
     src/security/inline/memory_protection.cpp
+    src/security/inline/replay_db.cpp
     src/pqc/kem/kem_interface.cpp
     src/pqc/kem/kem_factory.cpp
     src/pqc/sig/sig_interface.cpp
@@ -273,6 +275,8 @@ if(BUILD_TESTS)
             src/security/inline/rate_limiter.cpp
             src/security/inline/audit_logger.cpp
             src/security/inline/memory_protection.cpp
+            src/security/inline/replay_db.cpp
+            src/core/file_io.cpp
             src/pqc/kem/kem_interface.cpp
             src/pqc/kem/kem_factory.cpp
             src/pqc/sig/sig_interface.cpp
