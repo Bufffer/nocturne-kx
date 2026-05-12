@@ -482,8 +482,12 @@ if(BUILD_FUZZER)
     add_executable(nocturne-fuzzer
         tests/fuzzer_main.cpp
         src/core/side_channel.cpp
+        src/core/file_io.cpp
         src/protocol/packet.cpp
         src/security/inline/rate_limiter.cpp
+        src/security/inline/audit_logger.cpp
+        src/security/inline/memory_protection.cpp
+        src/security/inline/replay_db.cpp
         src/pqc/kem/kem_interface.cpp
         src/pqc/kem/kem_factory.cpp
         src/pqc/sig/sig_interface.cpp
