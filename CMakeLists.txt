@@ -200,6 +200,7 @@ set(NOCTURNE_CORE_SOURCES
     src/transport.hpp
     src/core/side_channel.cpp
     src/protocol/packet.cpp
+    src/security/inline/rate_limiter.cpp
     src/pqc/kem/kem_interface.cpp
     src/pqc/kem/kem_factory.cpp
     src/pqc/sig/sig_interface.cpp
@@ -267,6 +268,7 @@ if(BUILD_TESTS)
             tests/test_main.cpp
             src/core/side_channel.cpp
             src/protocol/packet.cpp
+            src/security/inline/rate_limiter.cpp
             src/pqc/kem/kem_interface.cpp
             src/pqc/kem/kem_factory.cpp
             src/pqc/sig/sig_interface.cpp
@@ -473,6 +475,7 @@ if(BUILD_FUZZER)
         tests/fuzzer_main.cpp
         src/core/side_channel.cpp
         src/protocol/packet.cpp
+        src/security/inline/rate_limiter.cpp
         src/pqc/kem/kem_interface.cpp
         src/pqc/kem/kem_factory.cpp
         src/pqc/sig/sig_interface.cpp
