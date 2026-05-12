@@ -201,6 +201,7 @@ set(NOCTURNE_CORE_SOURCES
     src/core/side_channel.cpp
     src/protocol/packet.cpp
     src/security/inline/rate_limiter.cpp
+    src/security/inline/audit_logger.cpp
     src/pqc/kem/kem_interface.cpp
     src/pqc/kem/kem_factory.cpp
     src/pqc/sig/sig_interface.cpp
@@ -269,6 +270,7 @@ if(BUILD_TESTS)
             src/core/side_channel.cpp
             src/protocol/packet.cpp
             src/security/inline/rate_limiter.cpp
+            src/security/inline/audit_logger.cpp
             src/pqc/kem/kem_interface.cpp
             src/pqc/kem/kem_factory.cpp
             src/pqc/sig/sig_interface.cpp
