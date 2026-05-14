@@ -114,27 +114,22 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install dependencies
-      # libstdc++-14-dev brings in the GCC-14 C++ headers (where
-      # std::expected is fully enabled). Clang picks the newest installed
-      # libstdc++ by default; on Ubuntu 24.04 noble the libstdc++-13 that
-      # ships with build-essential treats <expected> as a stub until
-      # __cplusplus equals the *exact* draft GCC 13 was built against,
-      # which causes the P5.0 result.hpp to fail on every clang sub-job.
+      # clang-19 + libstdc++-14-dev: only this combination compiles
+      # P5.0's src/core/result.hpp. The default `clang` package on
+      # Ubuntu 24.04 noble pins clang-18, which doesn't see libstdc++
+      # 14's <expected> even with update-alternatives — proven against
+      # commit 4fafc1e. clang-19 finds it consistently (security-audit.yml's
+      # Fuzz Testing job, which already uses clang-19, went green on 2b8a7da).
       run: |
         sudo apt-get update
         sudo apt-get install -y libsodium-dev libssl-dev pkg-config cmake \
-            build-essential gcc-14 g++-14 libstdc++-14-dev clang git ninja-build
-        # Make gcc-14 the default toolchain so clang auto-discovers
-        # libstdc++-14's headers (clang queries `gcc -print-search-dirs`
-        # not `g++`, so installing g++-14 alone is not enough).
-        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
-        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+            build-essential gcc-14 g++-14 libstdc++-14-dev clang-19 git ninja-build
 
     - name: Configure CMake with sanitizer
       run: |
         cmake -B ${{github.workspace}}/build-${{matrix.sanitizer}} \
           -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_CXX_COMPILER=clang++-19 \
           -DBUILD_TESTS=OFF \
           -DCMAKE_CXX_FLAGS="-fsanitize=${{matrix.sanitizer}} -fno-omit-frame-pointer" \
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=${{matrix.sanitizer}}"
@@ -154,28 +149,18 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install dependencies
-      # libstdc++-14-dev brings in the GCC-14 C++ headers (where
-      # std::expected is fully enabled). Clang picks the newest installed
-      # libstdc++ by default; on Ubuntu 24.04 noble the libstdc++-13 that
-      # ships with build-essential treats <expected> as a stub until
-      # __cplusplus equals the *exact* draft GCC 13 was built against,
-      # which causes the P5.0 result.hpp to fail on every clang sub-job.
+      # See cmake.yml `build-debug` for the clang-19 + libstdc++-14 rationale.
       run: |
         sudo apt-get update
         sudo apt-get install -y libsodium-dev libssl-dev pkg-config cmake \
-            build-essential gcc-14 g++-14 libstdc++-14-dev clang git ninja-build
-        # Make gcc-14 the default toolchain so clang auto-discovers
-        # libstdc++-14's headers (clang queries `gcc -print-search-dirs`
-        # not `g++`, so installing g++-14 alone is not enough).
-        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
-        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+            build-essential gcc-14 g++-14 libstdc++-14-dev clang-19 git ninja-build
 
     - name: Configure CMake with memory sanitizer
       run: |
         cmake -B ${{github.workspace}}/build-memory \
           -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_C_COMPILER=clang \
-          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER=clang-19 \
+          -DCMAKE_CXX_COMPILER=clang++-19 \
           -DBUILD_TESTS=OFF \
           -DCMAKE_CXX_FLAGS="-fsanitize=memory -fno-omit-frame-pointer" \
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=memory"
@@ -196,12 +181,12 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install dependencies
-      # See cmake.yml `build-debug` for the libstdc++-14-dev rationale.
+      # See cmake.yml `build-debug` for the clang-19 + libstdc++-14 rationale.
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           libsodium-dev libssl-dev pkg-config cmake build-essential \
-          g++-14 libstdc++-14-dev clang git ninja-build
+          gcc-14 g++-14 libstdc++-14-dev clang-19 git ninja-build
 
     - name: Configure CMake for fuzzing
       run: |
@@ -211,8 +196,8 @@ jobs:
         # via target_compile_options, so we don't pass them globally here.
         cmake -B ${{github.workspace}}/build-fuzz \
           -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_C_COMPILER=clang \
-          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER=clang-19 \
+          -DCMAKE_CXX_COMPILER=clang++-19 \
           -DBUILD_FUZZER=ON \
           -DBUILD_TESTS=OFF \
           -DENABLE_PQC=OFF
