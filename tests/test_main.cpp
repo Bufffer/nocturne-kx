@@ -215,13 +215,13 @@ TEST_CASE("End-to-end encryption/decryption", "[e2e]") {
     Bytes aad = {0xAA, 0xBB, 0xCC, 0xDD};
     
     SECTION("Basic encryption without signature") {
-        auto encrypted = encrypt_packet(receiver.pk, plaintext, aad, 0, false, nullptr, nullptr);
+        auto encrypted = encrypt_packet(receiver.pk, plaintext, EncryptOptions{.aad = aad});
         REQUIRE(!encrypted.empty());
-        
-        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted, std::nullopt, nullptr, std::nullopt);
+
+        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted);
         REQUIRE(decrypted == plaintext);
     }
-    
+
     SECTION("Encryption with signature") {
         // Create signer key file first
         {
@@ -229,36 +229,42 @@ TEST_CASE("End-to-end encryption/decryption", "[e2e]") {
             f.write(reinterpret_cast<const char*>(sender.sk.data()), sender.sk.size());
         }
         FileHSM hsm("test_signer_sk.bin");
-        
-        auto encrypted = encrypt_packet(receiver.pk, plaintext, aad, 0, false, &hsm, nullptr);
+
+        auto encrypted = encrypt_packet(receiver.pk, plaintext,
+            EncryptOptions{.aad = aad, .signer = &hsm});
         REQUIRE(!encrypted.empty());
-        
-        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted, sender.pk, nullptr, std::nullopt);
+
+        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted,
+            DecryptOptions{.expected_signer_ed25519_pk = sender.pk});
         REQUIRE(decrypted == plaintext);
-        
+
         // Cleanup
         std::filesystem::remove("test_signer_sk.bin");
     }
-    
+
     SECTION("Encryption with ratchet") {
-        auto encrypted = encrypt_packet(receiver.pk, plaintext, aad, 0, true, nullptr, nullptr);
+        auto encrypted = encrypt_packet(receiver.pk, plaintext,
+            EncryptOptions{.aad = aad, .use_ratchet = true});
         REQUIRE(!encrypted.empty());
-        
-        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted, std::nullopt, nullptr, std::nullopt);
+
+        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted);
         REQUIRE(decrypted == plaintext);
     }
-    
+
     SECTION("Rotation ID enforcement") {
-        auto encrypted = encrypt_packet(receiver.pk, plaintext, aad, 100, false, nullptr, nullptr);
-        
+        auto encrypted = encrypt_packet(receiver.pk, plaintext,
+            EncryptOptions{.aad = aad, .rotation_id = 100});
+
         // Should fail with min_rotation_id > packet rotation_id
         REQUIRE_THROWS_AS(
-            decrypt_packet(receiver.pk, receiver.sk, encrypted, std::nullopt, nullptr, 101),
+            decrypt_packet(receiver.pk, receiver.sk, encrypted,
+                DecryptOptions{.min_rotation_id = 101}),
             std::runtime_error
         );
-        
+
         // Should succeed with min_rotation_id <= packet rotation_id
-        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted, std::nullopt, nullptr, 100);
+        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted,
+            DecryptOptions{.min_rotation_id = 100});
         REQUIRE(decrypted == plaintext);
     }
 }
@@ -283,20 +289,14 @@ TEST_CASE("PQC signature roundtrip on encrypt_packet", "[pqc-sig]") {
         auto kp = scheme->generate_keypair();
         nocturne::PqcSignerConfig signer{st, kp.secret_key};
 
-        auto packet = encrypt_packet(receiver.pk, pt, aad,
-                                     /*rotation_id=*/0,
-                                     /*use_ratchet=*/false,
-                                     /*signer=*/nullptr,
-                                     /*rdb=*/nullptr,
-                                     /*session_id=*/"",
-                                     &signer);
+        auto packet = encrypt_packet(receiver.pk, pt,
+            EncryptOptions{.aad = aad, .pqc_signer = &signer});
         REQUIRE(!packet.empty());
 
         SECTION(std::string(label) + " happy path") {
             nocturne::PqcVerifierConfig verifier{st, kp.public_key};
             auto decrypted = decrypt_packet(receiver.pk, receiver.sk, packet,
-                                            std::nullopt, nullptr, std::nullopt,
-                                            "", &verifier);
+                DecryptOptions{.pqc_verifier = &verifier});
             REQUIRE(decrypted == pt);
         }
 
@@ -305,20 +305,17 @@ TEST_CASE("PQC signature roundtrip on encrypt_packet", "[pqc-sig]") {
             nocturne::PqcVerifierConfig verifier{st, kp2.public_key};
             REQUIRE_THROWS_AS(
                 decrypt_packet(receiver.pk, receiver.sk, packet,
-                               std::nullopt, nullptr, std::nullopt,
-                               "", &verifier),
+                    DecryptOptions{.pqc_verifier = &verifier}),
                 std::runtime_error);
         }
 
         SECTION(std::string(label) + " missing pqc-sig flag is rejected when verifier set") {
             // Strip FLAG_HAS_PQC_SIG by re-encrypting without a signer.
-            auto bare = encrypt_packet(receiver.pk, pt, aad, 0, false,
-                                       nullptr, nullptr, "", nullptr);
+            auto bare = encrypt_packet(receiver.pk, pt, EncryptOptions{.aad = aad});
             nocturne::PqcVerifierConfig verifier{st, kp.public_key};
             REQUIRE_THROWS_AS(
                 decrypt_packet(receiver.pk, receiver.sk, bare,
-                               std::nullopt, nullptr, std::nullopt,
-                               "", &verifier),
+                    DecryptOptions{.pqc_verifier = &verifier}),
                 std::runtime_error);
         }
     };
@@ -346,9 +343,7 @@ TEST_CASE("PQC signature roundtrip on encrypt_packet_kem (full hybrid)", "[pqc-s
     auto packet = encrypt_packet_kem(
         nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024,
         std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
-        pt, /*aad=*/{}, /*rotation_id=*/0,
-        /*signer=*/nullptr, /*rdb=*/nullptr,
-        /*session_id=*/"", &signer);
+        pt, EncryptOptions{.pqc_signer = &signer});
     REQUIRE(!packet.empty());
 
     SECTION("hybrid KEM + hybrid sig verifies") {
@@ -356,7 +351,7 @@ TEST_CASE("PQC signature roundtrip on encrypt_packet_kem (full hybrid)", "[pqc-s
         auto decrypted = decrypt_packet_kem(
             std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
             std::vector<uint8_t>(rx.secret_key.begin(), rx.secret_key.end()),
-            packet, std::nullopt, nullptr, std::nullopt, "", &verifier);
+            packet, DecryptOptions{.pqc_verifier = &verifier});
         REQUIRE(decrypted == pt);
     }
 
@@ -372,7 +367,7 @@ TEST_CASE("PQC signature roundtrip on encrypt_packet_kem (full hybrid)", "[pqc-s
             decrypt_packet_kem(
                 std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
                 std::vector<uint8_t>(rx.secret_key.begin(), rx.secret_key.end()),
-                packet, std::nullopt, nullptr, std::nullopt, "", &verifier),
+                packet, DecryptOptions{.pqc_verifier = &verifier}),
             std::runtime_error);
     }
 
@@ -388,7 +383,7 @@ TEST_CASE("PQC signature roundtrip on encrypt_packet_kem (full hybrid)", "[pqc-s
             decrypt_packet_kem(
                 std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
                 std::vector<uint8_t>(rx.secret_key.begin(), rx.secret_key.end()),
-                bad, std::nullopt, nullptr, std::nullopt, "", &verifier),
+                bad, DecryptOptions{.pqc_verifier = &verifier}),
             std::runtime_error);
     }
 }
@@ -414,10 +409,8 @@ TEST_CASE("PQC encrypt_packet_kem / decrypt_packet_kem roundtrip", "[e2e][pqc]")
         nocturne::Bytes aad       = {0xDE, 0xAD, 0xBE, 0xEF};
 
         SECTION(std::string("happy path: ") + label) {
-            auto packet = encrypt_packet_kem(kt, rx_pk, plaintext, aad,
-                                             /*rotation_id=*/0,
-                                             /*signer=*/nullptr,
-                                             /*rdb=*/nullptr);
+            auto packet = encrypt_packet_kem(kt, rx_pk, plaintext,
+                EncryptOptions{.aad = aad});
             REQUIRE(!packet.empty());
 
             auto decrypted = decrypt_packet_kem(rx_pk, rx_sk, packet);
@@ -425,8 +418,8 @@ TEST_CASE("PQC encrypt_packet_kem / decrypt_packet_kem roundtrip", "[e2e][pqc]")
         }
 
         SECTION(std::string("tampered ciphertext fails: ") + label) {
-            auto packet = encrypt_packet_kem(kt, rx_pk, plaintext, aad,
-                                             0, nullptr, nullptr);
+            auto packet = encrypt_packet_kem(kt, rx_pk, plaintext,
+                EncryptOptions{.aad = aad});
             // Flip a bit in the AEAD ciphertext region by mutating the
             // last byte (which is always inside the AEAD tag).
             packet.back() ^= 0x01;
@@ -436,8 +429,8 @@ TEST_CASE("PQC encrypt_packet_kem / decrypt_packet_kem roundtrip", "[e2e][pqc]")
         }
 
         SECTION(std::string("wrong receiver key fails: ") + label) {
-            auto packet = encrypt_packet_kem(kt, rx_pk, plaintext, aad,
-                                             0, nullptr, nullptr);
+            auto packet = encrypt_packet_kem(kt, rx_pk, plaintext,
+                EncryptOptions{.aad = aad});
             auto kp2 = kem->generate_keypair();
             std::vector<uint8_t> wrong_sk(kp2.secret_key.begin(),
                                           kp2.secret_key.end());
@@ -472,20 +465,20 @@ TEST_CASE("PQC roundtrip with Ed25519 signer", "[e2e][pqc]") {
     nocturne::Bytes plaintext = {0x01, 0x02, 0x03, 0x04};
     nocturne::Bytes aad       = {0xCA, 0xFE};
 
-    auto packet = encrypt_packet_kem(kem_type, rx_pk, plaintext, aad,
-                                     /*rotation_id=*/0, &hsm, nullptr);
+    auto packet = encrypt_packet_kem(kem_type, rx_pk, plaintext,
+        EncryptOptions{.aad = aad, .signer = &hsm});
 
     SECTION("signed packet verifies with correct signer pk") {
-        auto decrypted = decrypt_packet_kem(rx_pk, rx_sk, packet, sender.pk,
-                                            nullptr, std::nullopt);
+        auto decrypted = decrypt_packet_kem(rx_pk, rx_sk, packet,
+            DecryptOptions{.expected_signer_ed25519_pk = sender.pk});
         REQUIRE(decrypted == plaintext);
     }
 
     SECTION("signed packet rejected with wrong signer pk") {
         auto wrong = nocturne::gen_ed25519();
         REQUIRE_THROWS_AS(
-            decrypt_packet_kem(rx_pk, rx_sk, packet, wrong.pk,
-                               nullptr, std::nullopt),
+            decrypt_packet_kem(rx_pk, rx_sk, packet,
+                DecryptOptions{.expected_signer_ed25519_pk = wrong.pk}),
             std::runtime_error);
     }
 

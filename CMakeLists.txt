@@ -201,6 +201,7 @@ set(NOCTURNE_CORE_SOURCES
     src/core/side_channel.cpp
     src/core/file_io.cpp
     src/protocol/packet.cpp
+    src/protocol/messaging.cpp
     src/security/inline/rate_limiter.cpp
     src/security/inline/audit_logger.cpp
     src/security/inline/memory_protection.cpp
@@ -272,6 +273,7 @@ if(BUILD_TESTS)
             tests/test_main.cpp
             src/core/side_channel.cpp
             src/protocol/packet.cpp
+            src/protocol/messaging.cpp
             src/security/inline/rate_limiter.cpp
             src/security/inline/audit_logger.cpp
             src/security/inline/memory_protection.cpp
@@ -484,6 +486,7 @@ if(BUILD_FUZZER)
         src/core/side_channel.cpp
         src/core/file_io.cpp
         src/protocol/packet.cpp
+        src/protocol/messaging.cpp
         src/security/inline/rate_limiter.cpp
         src/security/inline/audit_logger.cpp
         src/security/inline/memory_protection.cpp

@@ -72,6 +72,8 @@
 #include "src/hsm/inline/file_hsm.hpp"
 #include "src/hsm/inline/pkcs11_adapter.hpp"
 #include "src/protocol/packet_io.hpp"
+#include "src/protocol/keys.hpp"
+#include "src/protocol/messaging.hpp"
 #include <iomanip>
 
 #include <sodium.h>
@@ -123,71 +125,14 @@ constexpr size_t MAX_ALLOCATION_SIZE = 100 * 1024 * 1024; // 100MB maximum alloc
 // in P5.4. The memory_protection namespace name and SecureMemory<T> template
 // are preserved; existing call sites keep compiling unchanged.
 
-namespace nocturne {
-
 // Constants, exception hierarchy, key-pair types, and check_sodium()
 // all moved to src/core/{flags,types,byte_span,error,result}.hpp in
-// P5.0–P5.1. The names below remain reachable through this namespace
-// because the foundation headers declare them in namespace nocturne.
-
-inline X25519KeyPair gen_x25519() {
-    // Use secure memory for key generation
-    memory_protection::SecureMemory<uint8_t> secure_sk(crypto_kx_SECRETKEYBYTES);
-    memory_protection::SecureMemory<uint8_t> secure_pk(crypto_kx_PUBLICKEYBYTES);
-    
-    // Generate key pair in secure memory
-    crypto_kx_keypair(secure_pk.get(), secure_sk.get());
-    
-    // Side-channel protection: flush cache and add random delay
-    nocturne::side_channel::flush_cache_line(secure_sk.get());
-    nocturne::side_channel::random_delay();
-    nocturne::side_channel::memory_barrier();
-    
-    // Copy to return value (will be zeroed by SecureMemory destructor)
-    X25519KeyPair kp;
-    std::memcpy(kp.pk.data(), secure_pk.get(), crypto_kx_PUBLICKEYBYTES);
-    std::memcpy(kp.sk.data(), secure_sk.get(), crypto_kx_SECRETKEYBYTES);
-    
-    return kp;
-}
-
-inline Ed25519KeyPair gen_ed25519() {
-    // Use secure memory for Ed25519 key generation to avoid secret leakage
-    memory_protection::SecureMemory<uint8_t> secure_sk(crypto_sign_SECRETKEYBYTES);
-    memory_protection::SecureMemory<uint8_t> secure_pk(crypto_sign_PUBLICKEYBYTES);
-
-    if (crypto_sign_keypair(secure_pk.get(), secure_sk.get()) != 0) {
-        throw CryptoError("ed25519 keypair generation failed");
-    }
-
-    // Side-channel protection
-    nocturne::side_channel::flush_cache_line(secure_sk.get());
-    nocturne::side_channel::random_delay();
-    nocturne::side_channel::memory_barrier();
-
-    Ed25519KeyPair kp;
-    std::memcpy(kp.pk.data(), secure_pk.get(), crypto_sign_PUBLICKEYBYTES);
-    std::memcpy(kp.sk.data(), secure_sk.get(), crypto_sign_SECRETKEYBYTES);
-
-    // secure memory will be zeroed on destructor of SecureMemory
-    return kp;
-}
-
-// Packet, PqcSignerConfig, PqcVerifierConfig, the endian helpers, and
-// serialize/deserialize all moved to src/protocol/packet.{hpp,cpp} in
-// P5.2. The names remain reachable through namespace nocturne because
-// packet.hpp declares them there.
-
-// serialize()/deserialize() moved to src/protocol/packet.cpp in P5.2.
-// Declarations are visible via #include "src/protocol/packet.hpp".
-
-// derive_aead_key_from_session, derive_tx_key_client, derive_rx_key_server,
-// ratchet_mix, aead_encrypt_xchacha, aead_decrypt_xchacha, ed25519_sign,
-// ed25519_verify all moved to src/protocol/{kdf,aead,signing}.hpp in P5.3.
-// All retain their nocturne:: namespace; call sites consume them unchanged
-// except that the (ptr, size) pair API has been replaced with BytesView.
-
-} // namespace nocturne
+// P5.0–P5.1. gen_x25519 / gen_ed25519 moved to src/protocol/keys.hpp
+// in P5.7 so messaging.cpp can share them. Packet wire format and
+// serialize/deserialize live in src/protocol/packet.{hpp,cpp} (P5.2).
+// KDF / AEAD / Ed25519 primitives are in src/protocol/{kdf,aead,
+// signing}.hpp (P5.3). All names remain reachable through namespace
+// nocturne via the foundation headers.
 
 // File I/O helpers moved to src/core/file_io.{hpp,cpp} in P5.4. Pull the
 // names into the global namespace so the rest of nocturne-kx.cpp keeps
@@ -203,367 +148,11 @@ using nocturne::write_all_raw;
 
 using nocturne::ReplayDB;
 
-[[nodiscard]] static std::string hexify(std::span<const std::uint8_t> bytes) {
-    static constexpr std::array<char, 16> nibble = {
-        '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'
-    };
-    std::string out;
-    out.reserve(bytes.size() * 2);
-    for (auto b : bytes) {
-        out.push_back(nibble[b >> 4]);
-        out.push_back(nibble[b & 0x0F]);
-    }
-    return out;
-}
-
-// HSMInterface, FileHSM, PKCS11HSM moved to src/hsm/inline/{hsm_interface,
-// file_hsm, pkcs11_adapter}.hpp in P5.5. Types stay at global scope so
-// existing CLI call sites compile unchanged.
-
-// Enhanced high-level encrypt/decrypt with comprehensive security features
-nocturne::Bytes encrypt_packet(
-    const std::array<uint8_t, crypto_kx_PUBLICKEYBYTES>& receiver_x25519_pk,
-    const nocturne::Bytes& plaintext,
-    const nocturne::Bytes& aad = {},
-    uint32_t rotation_id = 0,
-    bool use_ratchet = false,
-    HSMInterface* signer = nullptr,
-    ReplayDB* rdb = nullptr,
-    const std::string& session_id = "",
-    const nocturne::PqcSignerConfig* pqc_signer = nullptr)
-{
-    nocturne::check_sodium();
-
-    // Rate limiting: Check if encryption request is allowed
-    std::string rate_limit_id = "encrypt:" + hexify(receiver_x25519_pk);
-    if (!session_id.empty()) {
-        rate_limit_id += ":" + session_id;
-    }
-    
-    if (!rate_limiting::allow_request(rate_limit_id)) {
-        throw std::runtime_error("Rate limit exceeded for encryption operation");
-    }
-
-    auto eph = nocturne::gen_x25519();
-    auto key = nocturne::derive_tx_key_client(eph.pk, eph.sk, receiver_x25519_pk);
-
-    nocturne::Packet p;
-    p.version = nocturne::VERSION;
-    p.flags = 0;
-    p.rotation_id = rotation_id;
-    randombytes_buf(p.nonce.data(), p.nonce.size());
-    p.eph_pk = eph.pk;
-
-    if (rdb) {
-        // Use "tx:" prefix for sender's outgoing counters
-        std::string rid = "tx:" + hexify(receiver_x25519_pk);
-        uint64_t prev = rdb->get(rid);
-        p.counter = prev + 1;
-        rdb->set(rid, p.counter);
-    } else {
-        uint64_t c; randombytes_buf(&c, sizeof(c)); p.counter = c;
-    }
-
-    if (use_ratchet) {
-        p.flags |= nocturne::FLAG_HAS_RATCHET;
-        auto ratk = nocturne::gen_x25519();
-        p.ratchet_pk = ratk.pk;
-        // compute DH between ratk.sk and receiver_x25519_pk (real DH)
-        std::array<uint8_t, crypto_scalarmult_BYTES> dh_shared{};
-        if (crypto_scalarmult(dh_shared.data(), ratk.sk.data(), receiver_x25519_pk.data()) != 0) throw std::runtime_error("dh failed");
-        auto mixed = nocturne::ratchet_mix(key, nocturne::BytesView{dh_shared.data(), dh_shared.size()});
-        // Side-channel protection: secure memory zeroing
-        nocturne::side_channel::secure_zero_memory(key.data(), key.size());
-        nocturne::side_channel::secure_zero_memory(ratk.sk.data(), ratk.sk.size());
-        nocturne::side_channel::flush_cache_line(key.data());
-        nocturne::side_channel::flush_cache_line(ratk.sk.data());
-        key = mixed;
-    }
-
-    p.aad = aad;
-    p.ciphertext = nocturne::aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
-
-    if (signer) {
-        nocturne::packet_io::attach_classical_signature(p, *signer, session_id);
-    }
-    if (pqc_signer) {
-        nocturne::packet_io::attach_pqc_signature(p, *pqc_signer, session_id);
-    }
-
-    auto out = nocturne::serialize(p);
-
-    // Side-channel protection: secure memory zeroing
-    nocturne::side_channel::secure_zero_memory(eph.sk.data(), eph.sk.size());
-    nocturne::side_channel::secure_zero_memory(key.data(), key.size());
-    nocturne::side_channel::flush_cache_line(eph.sk.data());
-    nocturne::side_channel::flush_cache_line(key.data());
-    nocturne::side_channel::memory_barrier();
-
-    return out;
-}
-
-nocturne::Bytes decrypt_packet(
-    const std::array<uint8_t, crypto_kx_PUBLICKEYBYTES>& receiver_x25519_pk,
-    const std::array<uint8_t, crypto_kx_SECRETKEYBYTES>& receiver_x25519_sk,
-    const nocturne::Bytes& packet_bytes,
-    const std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>>& opt_expected_signer_ed25519_pk = std::nullopt,
-    ReplayDB* rdb = nullptr,
-    std::optional<uint32_t> min_rotation_id = std::nullopt,
-    const std::string& session_id = "",
-    const nocturne::PqcVerifierConfig* pqc_verifier = nullptr)
-{
-    nocturne::check_sodium();
-
-    // Rate limiting: Check if decryption request is allowed
-    std::string rate_limit_id = "decrypt:" + hexify(receiver_x25519_pk);
-    if (!session_id.empty()) {
-        rate_limit_id += ":" + session_id;
-    }
-    
-    if (!rate_limiting::allow_request(rate_limit_id)) {
-        throw std::runtime_error("Rate limit exceeded for decryption operation");
-    }
-
-    nocturne::Packet p = nocturne::deserialize(packet_bytes);
-
-    if (opt_expected_signer_ed25519_pk.has_value()) {
-        nocturne::packet_io::verify_classical_signature(
-            p, *opt_expected_signer_ed25519_pk, session_id);
-    }
-    if (pqc_verifier) {
-        nocturne::packet_io::verify_pqc_signature(p, *pqc_verifier, session_id);
-    }
-
-    if (min_rotation_id.has_value()) {
-        if (p.rotation_id < *min_rotation_id) throw std::runtime_error("stale rotation_id: reject message");
-    }
-
-    if (rdb) {
-        // Use "rx:" prefix for receiver's incoming counters
-        std::string rid = "rx:" + hexify(receiver_x25519_pk);
-        uint64_t last = rdb->get(rid);
-
-        // Enhanced replay protection with gap detection
-        if (p.counter <= last) {
-            throw std::runtime_error("replay detected: counter too small");
-        }
-
-        // Detect large gaps (potential message loss)
-        if (p.counter > last + 1000) {
-            // Log warning but don't fail (allows for legitimate gaps)
-            std::cerr << "WARNING: Large counter gap detected: " << last << " -> " << p.counter << std::endl;
-        }
-
-        rdb->set(rid, p.counter);
-    }
-
-    auto key = nocturne::derive_rx_key_server(p.eph_pk, receiver_x25519_pk, receiver_x25519_sk);
-
-    if (p.flags & nocturne::FLAG_HAS_RATCHET) {
-        if (!p.ratchet_pk) throw std::runtime_error("ratchet pk missing");
-        std::array<uint8_t, crypto_scalarmult_BYTES> dh_shared{};
-        if (crypto_scalarmult(dh_shared.data(), receiver_x25519_sk.data(), p.ratchet_pk->data()) != 0) throw std::runtime_error("dh failed");
-        auto mixed = nocturne::ratchet_mix(key, nocturne::BytesView{dh_shared.data(), dh_shared.size()});
-        // Side-channel protection: secure memory zeroing
-        nocturne::side_channel::secure_zero_memory(key.data(), key.size());
-        nocturne::side_channel::flush_cache_line(key.data());
-        key = mixed;
-    }
-
-    auto pt = nocturne::aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext);
-
-    // Enhanced security: zero all sensitive data with side-channel protection
-    nocturne::side_channel::secure_zero_memory(key.data(), key.size());
-    nocturne::side_channel::flush_cache_line(key.data());
-    nocturne::side_channel::memory_barrier();
-    
-    // Validate decrypted plaintext (basic sanity check)
-    if (pt.size() > 1024 * 1024) { // 1MB limit
-        throw std::runtime_error("decrypted plaintext too large");
-    }
-
-    return pt;
-}
-
-// ============================================================================
-// Post-Quantum / Hybrid KEM encrypt/decrypt
-// ============================================================================
-//
-// These run alongside the classic X25519 encrypt_packet/decrypt_packet. They
-// use the KEMFactory in src/pqc/kem to encapsulate a shared secret with the
-// receiver's KEM public key, then derive the AEAD key from that secret. The
-// resulting packet has FLAG_HAS_PQC_KEM set; the sender's KEM ciphertext is
-// transmitted in pqc_kem_ct, and eph_pk is left zeroed.
-//
-// kem_type values match nocturne::pqc::KEMType:
-//   1 = HYBRID_X25519_MLKEM1024 (recommended; 1600B pk, 3200B sk, 1601B ct)
-//   2 = PURE_MLKEM1024          (1568B pk, 3168B sk, 1568B ct)
-
-// derive_aead_key_from_kem_secret moved to src/protocol/kdf.hpp in P5.3.
-
-nocturne::Bytes encrypt_packet_kem(
-    nocturne::pqc::KEMType kem_type,
-    const std::vector<uint8_t>& receiver_pk,
-    const nocturne::Bytes& plaintext,
-    const nocturne::Bytes& aad = {},
-    uint32_t rotation_id = 0,
-    HSMInterface* signer = nullptr,
-    ReplayDB* rdb = nullptr,
-    const std::string& session_id = "",
-    const nocturne::PqcSignerConfig* pqc_signer = nullptr)
-{
-    nocturne::check_sodium();
-
-    if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
-        throw std::runtime_error("encrypt_packet_kem: use encrypt_packet for X25519");
-    }
-
-    auto kem = nocturne::pqc::KEMFactory{}.create(kem_type);
-    if (receiver_pk.size() != kem->public_key_size()) {
-        throw std::runtime_error("receiver kem pk size mismatch (expected " +
-                                 std::to_string(kem->public_key_size()) + ", got " +
-                                 std::to_string(receiver_pk.size()) + ")");
-    }
-
-    // Rate limit on the receiver pk (use SHA-style identifier from the first
-    // 32 bytes of the kem pk; full-pk hashing isn't necessary for a rate key).
-    std::string rate_limit_id = "encrypt_kem:" +
-        hexify(std::span{receiver_pk}.first(std::min<std::size_t>(receiver_pk.size(), 32)));
-    if (!session_id.empty()) rate_limit_id += ":" + session_id;
-    if (!rate_limiting::allow_request(rate_limit_id)) {
-        throw std::runtime_error("Rate limit exceeded for kem encryption operation");
-    }
-
-    auto [kem_ct, kem_ss] = kem->encapsulate(receiver_pk);
-    auto key = nocturne::derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4");
-
-    nocturne::Packet p;
-    p.version = nocturne::VERSION;
-    p.flags = nocturne::FLAG_HAS_PQC_KEM;
-    p.rotation_id = rotation_id;
-    // eph_pk left zeroed (unused when FLAG_HAS_PQC_KEM is set)
-    randombytes_buf(p.nonce.data(), p.nonce.size());
-    p.pqc_kem_type = static_cast<uint8_t>(kem_type);
-    p.pqc_kem_ct = std::move(kem_ct.ciphertext);
-
-    if (rdb) {
-        std::string rid = "tx-kem:" +
-            hexify(std::span{receiver_pk}.first(std::min<std::size_t>(receiver_pk.size(), 32)));
-        uint64_t prev = rdb->get(rid);
-        p.counter = prev + 1;
-        rdb->set(rid, p.counter);
-    } else {
-        uint64_t c; randombytes_buf(&c, sizeof(c)); p.counter = c;
-    }
-
-    p.aad = aad;
-    p.ciphertext = nocturne::aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
-
-    if (signer) {
-        nocturne::packet_io::attach_classical_signature(p, *signer, session_id);
-    }
-    if (pqc_signer) {
-        nocturne::packet_io::attach_pqc_signature(p, *pqc_signer, session_id);
-    }
-
-    auto out = nocturne::serialize(p);
-
-    // Wipe sensitive material before returning.
-    nocturne::side_channel::secure_zero_memory(key.data(), key.size());
-    nocturne::side_channel::flush_cache_line(key.data());
-    nocturne::side_channel::memory_barrier();
-    return out;
-}
-
-nocturne::Bytes decrypt_packet_kem(
-    const std::vector<uint8_t>& receiver_pk,
-    const std::vector<uint8_t>& receiver_sk,
-    const nocturne::Bytes& packet_bytes,
-    const std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>>& opt_expected_signer_ed25519_pk = std::nullopt,
-    ReplayDB* rdb = nullptr,
-    std::optional<uint32_t> min_rotation_id = std::nullopt,
-    const std::string& session_id = "",
-    const nocturne::PqcVerifierConfig* pqc_verifier = nullptr)
-{
-    nocturne::check_sodium();
-
-    nocturne::Packet p = nocturne::deserialize(packet_bytes);
-
-    if (!(p.flags & nocturne::FLAG_HAS_PQC_KEM) || p.pqc_kem_ct.empty()) {
-        throw std::runtime_error("packet is not a PQC/KEM packet");
-    }
-
-    auto kem_type = static_cast<nocturne::pqc::KEMType>(p.pqc_kem_type);
-    if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
-        throw std::runtime_error("X25519 packet flagged as PQC — refusing");
-    }
-
-    auto kem = nocturne::pqc::KEMFactory{}.create(kem_type);
-    if (receiver_pk.size() != kem->public_key_size()) {
-        throw std::runtime_error("receiver kem pk size mismatch");
-    }
-    if (receiver_sk.size() != kem->secret_key_size()) {
-        throw std::runtime_error("receiver kem sk size mismatch");
-    }
-    if (p.pqc_kem_ct.size() != kem->ciphertext_size()) {
-        throw std::runtime_error("kem ciphertext size mismatch");
-    }
-
-    std::string rate_limit_id = "decrypt_kem:" +
-        hexify(std::span{receiver_pk}.first(std::min<std::size_t>(receiver_pk.size(), 32)));
-    if (!session_id.empty()) rate_limit_id += ":" + session_id;
-    if (!rate_limiting::allow_request(rate_limit_id)) {
-        throw std::runtime_error("Rate limit exceeded for kem decryption operation");
-    }
-
-    if (opt_expected_signer_ed25519_pk.has_value()) {
-        nocturne::packet_io::verify_classical_signature(
-            p, *opt_expected_signer_ed25519_pk, session_id);
-    }
-    if (pqc_verifier) {
-        nocturne::packet_io::verify_pqc_signature(p, *pqc_verifier, session_id);
-    }
-
-    if (min_rotation_id.has_value() && p.rotation_id < *min_rotation_id) {
-        throw std::runtime_error("stale rotation_id: reject message");
-    }
-
-    if (rdb) {
-        std::string rid = "rx-kem:" +
-            hexify(std::span{receiver_pk}.first(std::min<std::size_t>(receiver_pk.size(), 32)));
-        uint64_t last = rdb->get(rid);
-        if (p.counter <= last) throw std::runtime_error("replay detected: counter too small");
-        if (p.counter > last + 1000) {
-            std::cerr << "WARNING: Large counter gap detected: " << last << " -> " << p.counter << std::endl;
-        }
-        rdb->set(rid, p.counter);
-    }
-
-    nocturne::pqc::KEMCiphertext ct;
-    ct.type = kem_type;
-    // HybridKEM::combine_secrets binds the derived shared secret to
-    // NOCTURNE_PROTOCOL_VERSION (the PQC protocol version, 4), NOT to the
-    // outer Nocturne packet version (which is still 3 for backward compat).
-    // The sender's encapsulate() uses NOCTURNE_PROTOCOL_VERSION here, so the
-    // receiver must mirror it — otherwise sender and receiver derive
-    // different combined secrets and the AEAD tag fails to authenticate
-    // with "aead decrypt failed (auth)" even though the KEM math is correct.
-    ct.version = static_cast<uint32_t>(NOCTURNE_PROTOCOL_VERSION);
-    ct.ciphertext = p.pqc_kem_ct;
-    auto kem_ss = kem->decapsulate(ct, receiver_sk);
-    auto key = nocturne::derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4");
-
-    auto pt = nocturne::aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext);
-
-    nocturne::side_channel::secure_zero_memory(key.data(), key.size());
-    nocturne::side_channel::flush_cache_line(key.data());
-    nocturne::side_channel::memory_barrier();
-
-    if (pt.size() > 1024 * 1024) throw std::runtime_error("decrypted plaintext too large");
-    return pt;
-}
-
-// File I/O helpers moved to src/core/file_io.cpp in P5.4.
+// hexify(), encrypt_packet(), decrypt_packet(), encrypt_packet_kem(),
+// decrypt_packet_kem() moved to src/protocol/messaging.{hpp,cpp} in
+// P5.7, plus a new EncryptOptions / DecryptOptions aggregate that
+// collapses the old positional default-parameter list. Call sites in
+// main() below were updated accordingly.
 
 // Usage message
 static void usage() {
@@ -956,10 +545,18 @@ int main(int argc, char** argv) {
             const nocturne::PqcSignerConfig* pqc_ptr =
                 pqc_signer_cfg.has_value() ? &*pqc_signer_cfg : nullptr;
 
+            nocturne::EncryptOptions enc_opts{
+                .aad         = aad,
+                .rotation_id = rotation_id,
+                .use_ratchet = use_ratchet,
+                .signer      = signer.get(),
+                .replay_db   = rdbp,
+                .pqc_signer  = pqc_ptr,
+            };
+
             nocturne::Bytes pkt;
             if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
-                pkt = encrypt_packet(rxpk_arr, pt, aad, rotation_id, use_ratchet,
-                                     signer.get(), rdbp, "", pqc_ptr);
+                pkt = nocturne::encrypt_packet(rxpk_arr, pt, enc_opts);
                 std::cout << "Encrypted (X25519"
                           << (pqc_ptr ? std::string(" + ") + nocturne::pqc::sig_type_to_string(pqc_ptr->type) : "")
                           << ") -> " << out << " (" << pkt.size() << " bytes)\n";
@@ -967,8 +564,7 @@ int main(int argc, char** argv) {
                 if (use_ratchet) {
                     std::cerr << "WARNING: --ratchet ignored in PQC/KEM mode (DR uses its own key path)\n";
                 }
-                pkt = encrypt_packet_kem(kem_type, rxpk_bytes, pt, aad, rotation_id,
-                                         signer.get(), rdbp, "", pqc_ptr);
+                pkt = nocturne::encrypt_packet_kem(kem_type, rxpk_bytes, pt, enc_opts);
                 const char* algo = (kem_type == nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024)
                                    ? "Hybrid X25519+ML-KEM-1024" : "ML-KEM-1024";
                 std::cout << "Encrypted (" << algo
@@ -1058,6 +654,13 @@ int main(int argc, char** argv) {
             if (pkt.size() < 2) throw std::runtime_error("packet too small to inspect");
             bool is_pqc = (pkt[1] & nocturne::FLAG_HAS_PQC_KEM) != 0;
 
+            nocturne::DecryptOptions dec_opts{
+                .expected_signer_ed25519_pk = expectpk_arr,
+                .replay_db                  = rdbp,
+                .min_rotation_id            = min_rotation,
+                .pqc_verifier               = pqc_vptr,
+            };
+
             nocturne::Bytes pt;
             if (!is_pqc) {
                 if (rxpk_b.size()!=crypto_kx_PUBLICKEYBYTES) throw std::runtime_error("X25519 receiver pk size mismatch");
@@ -1066,15 +669,13 @@ int main(int argc, char** argv) {
                 std::array<uint8_t, crypto_kx_SECRETKEYBYTES> rxsk_arr{};
                 std::memcpy(rxpk_arr.data(), rxpk_b.data(), rxpk_arr.size());
                 std::memcpy(rxsk_arr.data(), rxsk_b.data(), rxsk_arr.size());
-                pt = decrypt_packet(rxpk_arr, rxsk_arr, pkt, expectpk_arr, rdbp,
-                                    min_rotation, "", pqc_vptr);
+                pt = nocturne::decrypt_packet(rxpk_arr, rxsk_arr, pkt, dec_opts);
                 std::cout << "Decrypted (X25519"
                           << (pqc_vptr ? std::string(" + ") + nocturne::pqc::sig_type_to_string(pqc_vptr->type) + " verified" : "")
                           << ") -> " << out << " (" << pt.size() << " bytes)\n";
             } else {
                 // KEMFactory + size validation happens inside decrypt_packet_kem.
-                pt = decrypt_packet_kem(rxpk_b, rxsk_b, pkt, expectpk_arr, rdbp,
-                                        min_rotation, "", pqc_vptr);
+                pt = nocturne::decrypt_packet_kem(rxpk_b, rxsk_b, pkt, dec_opts);
                 std::cout << "Decrypted (PQC/KEM"
                           << (pqc_vptr ? std::string(" + ") + nocturne::pqc::sig_type_to_string(pqc_vptr->type) + " verified" : "")
                           << ") -> " << out << " (" << pt.size() << " bytes)\n";
@@ -1111,8 +712,9 @@ int main(int argc, char** argv) {
             std::cout << "  Testing encryption/decryption...\n";
             nocturne::Bytes test_pt = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
             nocturne::Bytes test_aad = {0xAA, 0xBB, 0xCC, 0xDD};
-            auto encrypted = encrypt_packet(bob.pk, test_pt, test_aad, 0, false, nullptr, nullptr);
-            auto decrypted = decrypt_packet(bob.pk, bob.sk, encrypted, std::nullopt, nullptr, std::nullopt);
+            auto encrypted = nocturne::encrypt_packet(bob.pk, test_pt,
+                nocturne::EncryptOptions{.aad = test_aad});
+            auto decrypted = nocturne::decrypt_packet(bob.pk, bob.sk, encrypted);
             if (decrypted == test_pt) {
                 std::cout << "    ✓ Encryption/decryption\n";
             } else {
