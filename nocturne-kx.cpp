@@ -38,6 +38,7 @@
 #include <map>
 #include <algorithm>
 #include <functional>
+#include <span>
 #include "src/double_ratchet.hpp"
 #include "src/handshake.hpp"
 #include "src/transport.hpp"
@@ -73,24 +74,12 @@
 #include "src/protocol/packet_io.hpp"
 #include <iomanip>
 
-// Platform-specific headers for memory protection
-#ifdef _WIN32
-#include <windows.h>
-#include <memoryapi.h>
-#else
-#include <sys/mman.h>
-#include <unistd.h>
-#include <fcntl.h>
-#endif
-
 #include <sodium.h>
-// ----- FileHSM secure storage helpers (passphrase-based at-rest encryption) -----
-// filehsm_secure_storage moved to src/hsm/inline/secure_storage.hpp in P5.5.
 
-// Platform-specific headers for side-channel protection
-#if defined(__x86_64__) || defined(__i386__)
-#include <immintrin.h>
-#endif
+// Platform-specific headers used to live here, but the symbols that needed
+// them (VirtualLock / mlock / _mm_clflush etc.) all moved out with P5.4's
+// memory_protection extraction and P5.5's HSM extraction. The remaining
+// translation unit talks only to standard C++ headers and libsodium.
 
 // SECURITY CONSTANTS (Global namespace for accessibility)
 constexpr size_t MAX_PACKET_SIZE = 1024 * 1024;      // 1MB maximum packet size
@@ -214,11 +203,17 @@ using nocturne::write_all_raw;
 
 using nocturne::ReplayDB;
 
-static std::string hexify(const uint8_t* p, size_t n) {
-    static const char* hex = "0123456789abcdef";
-    std::string s; s.reserve(n*2);
-    for (size_t i=0;i<n;i++) { s.push_back(hex[p[i]>>4]); s.push_back(hex[p[i]&0xf]); }
-    return s;
+[[nodiscard]] static std::string hexify(std::span<const std::uint8_t> bytes) {
+    static constexpr std::array<char, 16> nibble = {
+        '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'
+    };
+    std::string out;
+    out.reserve(bytes.size() * 2);
+    for (auto b : bytes) {
+        out.push_back(nibble[b >> 4]);
+        out.push_back(nibble[b & 0x0F]);
+    }
+    return out;
 }
 
 // HSMInterface, FileHSM, PKCS11HSM moved to src/hsm/inline/{hsm_interface,
@@ -237,11 +232,10 @@ nocturne::Bytes encrypt_packet(
     const std::string& session_id = "",
     const nocturne::PqcSignerConfig* pqc_signer = nullptr)
 {
-    using namespace nocturne;
     nocturne::check_sodium();
 
     // Rate limiting: Check if encryption request is allowed
-    std::string rate_limit_id = "encrypt:" + hexify(receiver_x25519_pk.data(), receiver_x25519_pk.size());
+    std::string rate_limit_id = "encrypt:" + hexify(receiver_x25519_pk);
     if (!session_id.empty()) {
         rate_limit_id += ":" + session_id;
     }
@@ -251,10 +245,10 @@ nocturne::Bytes encrypt_packet(
     }
 
     auto eph = nocturne::gen_x25519();
-    auto key = derive_tx_key_client(eph.pk, eph.sk, receiver_x25519_pk);
+    auto key = nocturne::derive_tx_key_client(eph.pk, eph.sk, receiver_x25519_pk);
 
-    Packet p;
-    p.version = VERSION;
+    nocturne::Packet p;
+    p.version = nocturne::VERSION;
     p.flags = 0;
     p.rotation_id = rotation_id;
     randombytes_buf(p.nonce.data(), p.nonce.size());
@@ -262,7 +256,7 @@ nocturne::Bytes encrypt_packet(
 
     if (rdb) {
         // Use "tx:" prefix for sender's outgoing counters
-        std::string rid = "tx:" + hexify(receiver_x25519_pk.data(), receiver_x25519_pk.size());
+        std::string rid = "tx:" + hexify(receiver_x25519_pk);
         uint64_t prev = rdb->get(rid);
         p.counter = prev + 1;
         rdb->set(rid, p.counter);
@@ -271,13 +265,13 @@ nocturne::Bytes encrypt_packet(
     }
 
     if (use_ratchet) {
-        p.flags |= FLAG_HAS_RATCHET;
-        auto ratk = gen_x25519();
+        p.flags |= nocturne::FLAG_HAS_RATCHET;
+        auto ratk = nocturne::gen_x25519();
         p.ratchet_pk = ratk.pk;
         // compute DH between ratk.sk and receiver_x25519_pk (real DH)
         std::array<uint8_t, crypto_scalarmult_BYTES> dh_shared{};
         if (crypto_scalarmult(dh_shared.data(), ratk.sk.data(), receiver_x25519_pk.data()) != 0) throw std::runtime_error("dh failed");
-        auto mixed = ratchet_mix(key, BytesView{dh_shared.data(), dh_shared.size()});
+        auto mixed = nocturne::ratchet_mix(key, nocturne::BytesView{dh_shared.data(), dh_shared.size()});
         // Side-channel protection: secure memory zeroing
         nocturne::side_channel::secure_zero_memory(key.data(), key.size());
         nocturne::side_channel::secure_zero_memory(ratk.sk.data(), ratk.sk.size());
@@ -287,7 +281,7 @@ nocturne::Bytes encrypt_packet(
     }
 
     p.aad = aad;
-    p.ciphertext = aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
+    p.ciphertext = nocturne::aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
 
     if (signer) {
         nocturne::packet_io::attach_classical_signature(p, *signer, session_id);
@@ -296,7 +290,7 @@ nocturne::Bytes encrypt_packet(
         nocturne::packet_io::attach_pqc_signature(p, *pqc_signer, session_id);
     }
 
-    auto out = serialize(p);
+    auto out = nocturne::serialize(p);
 
     // Side-channel protection: secure memory zeroing
     nocturne::side_channel::secure_zero_memory(eph.sk.data(), eph.sk.size());
@@ -318,11 +312,10 @@ nocturne::Bytes decrypt_packet(
     const std::string& session_id = "",
     const nocturne::PqcVerifierConfig* pqc_verifier = nullptr)
 {
-    using namespace nocturne;
     nocturne::check_sodium();
 
     // Rate limiting: Check if decryption request is allowed
-    std::string rate_limit_id = "decrypt:" + hexify(receiver_x25519_pk.data(), receiver_x25519_pk.size());
+    std::string rate_limit_id = "decrypt:" + hexify(receiver_x25519_pk);
     if (!session_id.empty()) {
         rate_limit_id += ":" + session_id;
     }
@@ -331,7 +324,7 @@ nocturne::Bytes decrypt_packet(
         throw std::runtime_error("Rate limit exceeded for decryption operation");
     }
 
-    Packet p = nocturne::deserialize(packet_bytes);
+    nocturne::Packet p = nocturne::deserialize(packet_bytes);
 
     if (opt_expected_signer_ed25519_pk.has_value()) {
         nocturne::packet_io::verify_classical_signature(
@@ -347,7 +340,7 @@ nocturne::Bytes decrypt_packet(
 
     if (rdb) {
         // Use "rx:" prefix for receiver's incoming counters
-        std::string rid = "rx:" + hexify(receiver_x25519_pk.data(), receiver_x25519_pk.size());
+        std::string rid = "rx:" + hexify(receiver_x25519_pk);
         uint64_t last = rdb->get(rid);
 
         // Enhanced replay protection with gap detection
@@ -364,20 +357,20 @@ nocturne::Bytes decrypt_packet(
         rdb->set(rid, p.counter);
     }
 
-    auto key = derive_rx_key_server(p.eph_pk, receiver_x25519_pk, receiver_x25519_sk);
+    auto key = nocturne::derive_rx_key_server(p.eph_pk, receiver_x25519_pk, receiver_x25519_sk);
 
-    if (p.flags & FLAG_HAS_RATCHET) {
+    if (p.flags & nocturne::FLAG_HAS_RATCHET) {
         if (!p.ratchet_pk) throw std::runtime_error("ratchet pk missing");
         std::array<uint8_t, crypto_scalarmult_BYTES> dh_shared{};
         if (crypto_scalarmult(dh_shared.data(), receiver_x25519_sk.data(), p.ratchet_pk->data()) != 0) throw std::runtime_error("dh failed");
-        auto mixed = ratchet_mix(key, BytesView{dh_shared.data(), dh_shared.size()});
+        auto mixed = nocturne::ratchet_mix(key, nocturne::BytesView{dh_shared.data(), dh_shared.size()});
         // Side-channel protection: secure memory zeroing
         nocturne::side_channel::secure_zero_memory(key.data(), key.size());
         nocturne::side_channel::flush_cache_line(key.data());
         key = mixed;
     }
 
-    auto pt = aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext);
+    auto pt = nocturne::aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext);
 
     // Enhanced security: zero all sensitive data with side-channel protection
     nocturne::side_channel::secure_zero_memory(key.data(), key.size());
@@ -419,7 +412,6 @@ nocturne::Bytes encrypt_packet_kem(
     const std::string& session_id = "",
     const nocturne::PqcSignerConfig* pqc_signer = nullptr)
 {
-    using namespace nocturne;
     nocturne::check_sodium();
 
     if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
@@ -436,18 +428,18 @@ nocturne::Bytes encrypt_packet_kem(
     // Rate limit on the receiver pk (use SHA-style identifier from the first
     // 32 bytes of the kem pk; full-pk hashing isn't necessary for a rate key).
     std::string rate_limit_id = "encrypt_kem:" +
-        hexify(receiver_pk.data(), std::min<size_t>(receiver_pk.size(), 32));
+        hexify(std::span{receiver_pk}.first(std::min<std::size_t>(receiver_pk.size(), 32)));
     if (!session_id.empty()) rate_limit_id += ":" + session_id;
     if (!rate_limiting::allow_request(rate_limit_id)) {
         throw std::runtime_error("Rate limit exceeded for kem encryption operation");
     }
 
     auto [kem_ct, kem_ss] = kem->encapsulate(receiver_pk);
-    auto key = derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4");
+    auto key = nocturne::derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4");
 
-    Packet p;
-    p.version = VERSION;
-    p.flags = FLAG_HAS_PQC_KEM;
+    nocturne::Packet p;
+    p.version = nocturne::VERSION;
+    p.flags = nocturne::FLAG_HAS_PQC_KEM;
     p.rotation_id = rotation_id;
     // eph_pk left zeroed (unused when FLAG_HAS_PQC_KEM is set)
     randombytes_buf(p.nonce.data(), p.nonce.size());
@@ -456,7 +448,7 @@ nocturne::Bytes encrypt_packet_kem(
 
     if (rdb) {
         std::string rid = "tx-kem:" +
-            hexify(receiver_pk.data(), std::min<size_t>(receiver_pk.size(), 32));
+            hexify(std::span{receiver_pk}.first(std::min<std::size_t>(receiver_pk.size(), 32)));
         uint64_t prev = rdb->get(rid);
         p.counter = prev + 1;
         rdb->set(rid, p.counter);
@@ -465,7 +457,7 @@ nocturne::Bytes encrypt_packet_kem(
     }
 
     p.aad = aad;
-    p.ciphertext = aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
+    p.ciphertext = nocturne::aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
 
     if (signer) {
         nocturne::packet_io::attach_classical_signature(p, *signer, session_id);
@@ -474,7 +466,7 @@ nocturne::Bytes encrypt_packet_kem(
         nocturne::packet_io::attach_pqc_signature(p, *pqc_signer, session_id);
     }
 
-    auto out = serialize(p);
+    auto out = nocturne::serialize(p);
 
     // Wipe sensitive material before returning.
     nocturne::side_channel::secure_zero_memory(key.data(), key.size());
@@ -493,12 +485,11 @@ nocturne::Bytes decrypt_packet_kem(
     const std::string& session_id = "",
     const nocturne::PqcVerifierConfig* pqc_verifier = nullptr)
 {
-    using namespace nocturne;
     nocturne::check_sodium();
 
-    Packet p = nocturne::deserialize(packet_bytes);
+    nocturne::Packet p = nocturne::deserialize(packet_bytes);
 
-    if (!(p.flags & FLAG_HAS_PQC_KEM) || p.pqc_kem_ct.empty()) {
+    if (!(p.flags & nocturne::FLAG_HAS_PQC_KEM) || p.pqc_kem_ct.empty()) {
         throw std::runtime_error("packet is not a PQC/KEM packet");
     }
 
@@ -519,7 +510,7 @@ nocturne::Bytes decrypt_packet_kem(
     }
 
     std::string rate_limit_id = "decrypt_kem:" +
-        hexify(receiver_pk.data(), std::min<size_t>(receiver_pk.size(), 32));
+        hexify(std::span{receiver_pk}.first(std::min<std::size_t>(receiver_pk.size(), 32)));
     if (!session_id.empty()) rate_limit_id += ":" + session_id;
     if (!rate_limiting::allow_request(rate_limit_id)) {
         throw std::runtime_error("Rate limit exceeded for kem decryption operation");
@@ -539,7 +530,7 @@ nocturne::Bytes decrypt_packet_kem(
 
     if (rdb) {
         std::string rid = "rx-kem:" +
-            hexify(receiver_pk.data(), std::min<size_t>(receiver_pk.size(), 32));
+            hexify(std::span{receiver_pk}.first(std::min<std::size_t>(receiver_pk.size(), 32)));
         uint64_t last = rdb->get(rid);
         if (p.counter <= last) throw std::runtime_error("replay detected: counter too small");
         if (p.counter > last + 1000) {
@@ -560,9 +551,9 @@ nocturne::Bytes decrypt_packet_kem(
     ct.version = static_cast<uint32_t>(NOCTURNE_PROTOCOL_VERSION);
     ct.ciphertext = p.pqc_kem_ct;
     auto kem_ss = kem->decapsulate(ct, receiver_sk);
-    auto key = derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4");
+    auto key = nocturne::derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4");
 
-    auto pt = aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext);
+    auto pt = nocturne::aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext);
 
     nocturne::side_channel::secure_zero_memory(key.data(), key.size());
     nocturne::side_channel::flush_cache_line(key.data());
