@@ -163,6 +163,20 @@ using nocturne::ReplayDB;
 // collapses the old positional default-parameter list. Call sites in
 // main() below were updated accordingly.
 
+// P6.1b: the messaging entry points return Result<Bytes> now. The CLI
+// keeps its single top-level catch (print + exit 2), so map typed
+// errors into a runtime_error whose what() carries "Name: message" —
+// preserving both the exit code and the human-readable reason that the
+// CI workflows grep for (e.g. "replay").
+template <typename T>
+static T cli_unwrap(nocturne::Result<T> r) {
+    if (!r) {
+        throw std::runtime_error{
+            std::string{r.error().name()} + ": " + r.error().message};
+    }
+    return std::move(*r);
+}
+
 // Usage message
 static void usage() {
     std::cout <<
@@ -578,7 +592,7 @@ int main(int argc, char** argv) {
 
             nocturne::Bytes pkt;
             if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
-                pkt = nocturne::encrypt_packet(rxpk_arr, pt, enc_opts);
+                pkt = cli_unwrap(nocturne::encrypt_packet(rxpk_arr, pt, enc_opts));
                 std::cout << "Encrypted (X25519"
                           << (pqc_ptr ? std::string(" + ") + nocturne::pqc::sig_type_to_string(pqc_ptr->type) : "")
                           << ") -> " << out << " (" << pkt.size() << " bytes)\n";
@@ -586,7 +600,7 @@ int main(int argc, char** argv) {
                 if (use_ratchet) {
                     std::cerr << "WARNING: --ratchet ignored in PQC/KEM mode (DR uses its own key path)\n";
                 }
-                pkt = nocturne::encrypt_packet_kem(kem_type, rxpk_bytes, pt, enc_opts);
+                pkt = cli_unwrap(nocturne::encrypt_packet_kem(kem_type, rxpk_bytes, pt, enc_opts));
                 const char* algo = (kem_type == nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024)
                                    ? "Hybrid X25519+ML-KEM-1024" : "ML-KEM-1024";
                 std::cout << "Encrypted (" << algo
@@ -691,13 +705,13 @@ int main(int argc, char** argv) {
                 std::array<uint8_t, crypto_kx_SECRETKEYBYTES> rxsk_arr{};
                 std::memcpy(rxpk_arr.data(), rxpk_b.data(), rxpk_arr.size());
                 std::memcpy(rxsk_arr.data(), rxsk_b.data(), rxsk_arr.size());
-                pt = nocturne::decrypt_packet(rxpk_arr, rxsk_arr, pkt, dec_opts);
+                pt = cli_unwrap(nocturne::decrypt_packet(rxpk_arr, rxsk_arr, pkt, dec_opts));
                 std::cout << "Decrypted (X25519"
                           << (pqc_vptr ? std::string(" + ") + nocturne::pqc::sig_type_to_string(pqc_vptr->type) + " verified" : "")
                           << ") -> " << out << " (" << pt.size() << " bytes)\n";
             } else {
                 // KEMFactory + size validation happens inside decrypt_packet_kem.
-                pt = nocturne::decrypt_packet_kem(rxpk_b, rxsk_b, pkt, dec_opts);
+                pt = cli_unwrap(nocturne::decrypt_packet_kem(rxpk_b, rxsk_b, pkt, dec_opts));
                 std::cout << "Decrypted (PQC/KEM"
                           << (pqc_vptr ? std::string(" + ") + nocturne::pqc::sig_type_to_string(pqc_vptr->type) + " verified" : "")
                           << ") -> " << out << " (" << pt.size() << " bytes)\n";
@@ -849,9 +863,9 @@ int main(int argc, char** argv) {
             std::cout << "  Testing encryption/decryption...\n";
             nocturne::Bytes test_pt = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
             nocturne::Bytes test_aad = {0xAA, 0xBB, 0xCC, 0xDD};
-            auto encrypted = nocturne::encrypt_packet(bob.pk, test_pt,
-                nocturne::EncryptOptions{.aad = test_aad});
-            auto decrypted = nocturne::decrypt_packet(bob.pk, bob.sk, encrypted);
+            auto encrypted = cli_unwrap(nocturne::encrypt_packet(bob.pk, test_pt,
+                nocturne::EncryptOptions{.aad = test_aad}));
+            auto decrypted = cli_unwrap(nocturne::decrypt_packet(bob.pk, bob.sk, encrypted));
             if (decrypted == test_pt) {
                 std::cout << "    ✓ Encryption/decryption\n";
             } else {

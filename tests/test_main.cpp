@@ -236,10 +236,12 @@ TEST_CASE("End-to-end encryption/decryption", "[e2e]") {
     
     SECTION("Basic encryption without signature") {
         auto encrypted = encrypt_packet(receiver.pk, plaintext, EncryptOptions{.aad = aad});
-        REQUIRE(!encrypted.empty());
+        REQUIRE(encrypted.has_value());
+        REQUIRE(!encrypted->empty());
 
-        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted);
-        REQUIRE(decrypted == plaintext);
+        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, *encrypted);
+        REQUIRE(decrypted.has_value());
+        REQUIRE(*decrypted == plaintext);
     }
 
     SECTION("Encryption with signature") {
@@ -252,11 +254,13 @@ TEST_CASE("End-to-end encryption/decryption", "[e2e]") {
 
         auto encrypted = encrypt_packet(receiver.pk, plaintext,
             EncryptOptions{.aad = aad, .signer = &hsm});
-        REQUIRE(!encrypted.empty());
+        REQUIRE(encrypted.has_value());
+        REQUIRE(!encrypted->empty());
 
-        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted,
+        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, *encrypted,
             DecryptOptions{.expected_signer_ed25519_pk = sender.pk});
-        REQUIRE(decrypted == plaintext);
+        REQUIRE(decrypted.has_value());
+        REQUIRE(*decrypted == plaintext);
 
         // Cleanup
         std::filesystem::remove("test_signer_sk.bin");
@@ -265,27 +269,31 @@ TEST_CASE("End-to-end encryption/decryption", "[e2e]") {
     SECTION("Encryption with ratchet") {
         auto encrypted = encrypt_packet(receiver.pk, plaintext,
             EncryptOptions{.aad = aad, .use_ratchet = true});
-        REQUIRE(!encrypted.empty());
+        REQUIRE(encrypted.has_value());
+        REQUIRE(!encrypted->empty());
 
-        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted);
-        REQUIRE(decrypted == plaintext);
+        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, *encrypted);
+        REQUIRE(decrypted.has_value());
+        REQUIRE(*decrypted == plaintext);
     }
 
     SECTION("Rotation ID enforcement") {
         auto encrypted = encrypt_packet(receiver.pk, plaintext,
             EncryptOptions{.aad = aad, .rotation_id = 100});
+        REQUIRE(encrypted.has_value());
 
-        // Should fail with min_rotation_id > packet rotation_id
-        REQUIRE_THROWS_AS(
-            decrypt_packet(receiver.pk, receiver.sk, encrypted,
-                DecryptOptions{.min_rotation_id = 101}),
-            std::runtime_error
-        );
+        // Must fail with min_rotation_id > packet rotation_id — typed
+        // RotationStale, not an exception (P6.1b error contract).
+        auto stale = decrypt_packet(receiver.pk, receiver.sk, *encrypted,
+            DecryptOptions{.min_rotation_id = 101});
+        REQUIRE_FALSE(stale.has_value());
+        REQUIRE(stale.error().code == ErrorCode::RotationStale);
 
         // Should succeed with min_rotation_id <= packet rotation_id
-        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, encrypted,
+        auto decrypted = decrypt_packet(receiver.pk, receiver.sk, *encrypted,
             DecryptOptions{.min_rotation_id = 100});
-        REQUIRE(decrypted == plaintext);
+        REQUIRE(decrypted.has_value());
+        REQUIRE(*decrypted == plaintext);
     }
 }
 
@@ -311,32 +319,35 @@ TEST_CASE("PQC signature roundtrip on encrypt_packet", "[pqc-sig]") {
 
         auto packet = encrypt_packet(receiver.pk, pt,
             EncryptOptions{.aad = aad, .pqc_signer = &signer});
-        REQUIRE(!packet.empty());
+        REQUIRE(packet.has_value());
+        REQUIRE(!packet->empty());
 
         SECTION(std::string(label) + " happy path") {
             nocturne::PqcVerifierConfig verifier{st, kp.public_key};
-            auto decrypted = decrypt_packet(receiver.pk, receiver.sk, packet,
+            auto decrypted = decrypt_packet(receiver.pk, receiver.sk, *packet,
                 DecryptOptions{.pqc_verifier = &verifier});
-            REQUIRE(decrypted == pt);
+            REQUIRE(decrypted.has_value());
+            REQUIRE(*decrypted == pt);
         }
 
         SECTION(std::string(label) + " wrong pk is rejected") {
             auto kp2 = scheme->generate_keypair();
             nocturne::PqcVerifierConfig verifier{st, kp2.public_key};
-            REQUIRE_THROWS_AS(
-                decrypt_packet(receiver.pk, receiver.sk, packet,
-                    DecryptOptions{.pqc_verifier = &verifier}),
-                std::runtime_error);
+            auto r = decrypt_packet(receiver.pk, receiver.sk, *packet,
+                DecryptOptions{.pqc_verifier = &verifier});
+            REQUIRE_FALSE(r.has_value());
+            REQUIRE(r.error().code == ErrorCode::SignatureVerifyFailed);
         }
 
         SECTION(std::string(label) + " missing pqc-sig flag is rejected when verifier set") {
             // Strip FLAG_HAS_PQC_SIG by re-encrypting without a signer.
             auto bare = encrypt_packet(receiver.pk, pt, EncryptOptions{.aad = aad});
+            REQUIRE(bare.has_value());
             nocturne::PqcVerifierConfig verifier{st, kp.public_key};
-            REQUIRE_THROWS_AS(
-                decrypt_packet(receiver.pk, receiver.sk, bare,
-                    DecryptOptions{.pqc_verifier = &verifier}),
-                std::runtime_error);
+            auto r = decrypt_packet(receiver.pk, receiver.sk, *bare,
+                DecryptOptions{.pqc_verifier = &verifier});
+            REQUIRE_FALSE(r.has_value());
+            REQUIRE(r.error().code == ErrorCode::SignatureMissing);
         }
     };
 
@@ -364,15 +375,17 @@ TEST_CASE("PQC signature roundtrip on encrypt_packet_kem (full hybrid)", "[pqc-s
         nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024,
         std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
         pt, EncryptOptions{.pqc_signer = &signer});
-    REQUIRE(!packet.empty());
+    REQUIRE(packet.has_value());
+    REQUIRE(!packet->empty());
 
     SECTION("hybrid KEM + hybrid sig verifies") {
         nocturne::PqcVerifierConfig verifier{sig_type, sig_kp.public_key};
         auto decrypted = decrypt_packet_kem(
             std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
             std::vector<uint8_t>(rx.secret_key.begin(), rx.secret_key.end()),
-            packet, DecryptOptions{.pqc_verifier = &verifier});
-        REQUIRE(decrypted == pt);
+            *packet, DecryptOptions{.pqc_verifier = &verifier});
+        REQUIRE(decrypted.has_value());
+        REQUIRE(*decrypted == pt);
     }
 
     SECTION("type-mismatch verifier is rejected") {
@@ -383,12 +396,12 @@ TEST_CASE("PQC signature roundtrip on encrypt_packet_kem (full hybrid)", "[pqc-s
         auto wrong_kp = wrong_scheme->generate_keypair();
         nocturne::PqcVerifierConfig verifier{
             nocturne::pqc::SigType::PURE_MLDSA87, wrong_kp.public_key};
-        REQUIRE_THROWS_AS(
-            decrypt_packet_kem(
-                std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
-                std::vector<uint8_t>(rx.secret_key.begin(), rx.secret_key.end()),
-                packet, DecryptOptions{.pqc_verifier = &verifier}),
-            std::runtime_error);
+        auto r = decrypt_packet_kem(
+            std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
+            std::vector<uint8_t>(rx.secret_key.begin(), rx.secret_key.end()),
+            *packet, DecryptOptions{.pqc_verifier = &verifier});
+        REQUIRE_FALSE(r.has_value());
+        REQUIRE(r.error().code == ErrorCode::SignatureTypeMismatch);
     }
 
     SECTION("tampered pqc_sig byte breaks verification") {
@@ -396,15 +409,15 @@ TEST_CASE("PQC signature roundtrip on encrypt_packet_kem (full hybrid)", "[pqc-s
         // FLAG_HAS_SIG block isn't set in this test, so packet.back() is
         // the last byte of the ML-DSA half. Flipping it must break the
         // hybrid AND-verify.
-        auto bad = packet;
+        auto bad = *packet;
         bad.back() ^= 0x01;
         nocturne::PqcVerifierConfig verifier{sig_type, sig_kp.public_key};
-        REQUIRE_THROWS_AS(
-            decrypt_packet_kem(
-                std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
-                std::vector<uint8_t>(rx.secret_key.begin(), rx.secret_key.end()),
-                bad, DecryptOptions{.pqc_verifier = &verifier}),
-            std::runtime_error);
+        auto r = decrypt_packet_kem(
+            std::vector<uint8_t>(rx.public_key.begin(), rx.public_key.end()),
+            std::vector<uint8_t>(rx.secret_key.begin(), rx.secret_key.end()),
+            bad, DecryptOptions{.pqc_verifier = &verifier});
+        REQUIRE_FALSE(r.has_value());
+        REQUIRE(r.error().code == ErrorCode::SignatureVerifyFailed);
     }
 }
 
@@ -431,34 +444,41 @@ TEST_CASE("PQC encrypt_packet_kem / decrypt_packet_kem roundtrip", "[e2e][pqc]")
         SECTION(std::string("happy path: ") + label) {
             auto packet = encrypt_packet_kem(kt, rx_pk, plaintext,
                 EncryptOptions{.aad = aad});
-            REQUIRE(!packet.empty());
+            REQUIRE(packet.has_value());
+            REQUIRE(!packet->empty());
 
-            auto decrypted = decrypt_packet_kem(rx_pk, rx_sk, packet);
-            REQUIRE(decrypted == plaintext);
+            auto decrypted = decrypt_packet_kem(rx_pk, rx_sk, *packet);
+            REQUIRE(decrypted.has_value());
+            REQUIRE(*decrypted == plaintext);
         }
 
         SECTION(std::string("tampered ciphertext fails: ") + label) {
             auto packet = encrypt_packet_kem(kt, rx_pk, plaintext,
                 EncryptOptions{.aad = aad});
+            REQUIRE(packet.has_value());
             // Flip a bit in the AEAD ciphertext region by mutating the
             // last byte (which is always inside the AEAD tag).
-            packet.back() ^= 0x01;
-            REQUIRE_THROWS_AS(
-                decrypt_packet_kem(rx_pk, rx_sk, packet),
-                std::runtime_error);
+            packet->back() ^= 0x01;
+            auto r = decrypt_packet_kem(rx_pk, rx_sk, *packet);
+            REQUIRE_FALSE(r.has_value());
+            REQUIRE(r.error().code == ErrorCode::AeadAuthFailed);
         }
 
         SECTION(std::string("wrong receiver key fails: ") + label) {
             auto packet = encrypt_packet_kem(kt, rx_pk, plaintext,
                 EncryptOptions{.aad = aad});
+            REQUIRE(packet.has_value());
             auto kp2 = kem->generate_keypair();
             std::vector<uint8_t> wrong_sk(kp2.secret_key.begin(),
                                           kp2.secret_key.end());
-            // Pair the original pk with a different sk — KEM decapsulate
-            // will produce a different shared secret, AEAD auth must fail.
-            REQUIRE_THROWS_AS(
-                decrypt_packet_kem(rx_pk, wrong_sk, packet),
-                std::runtime_error);
+            // Pair the original pk with a different sk — depending on the
+            // KEM type the mismatch surfaces either as a decapsulate
+            // reject or as a different shared secret that fails AEAD
+            // auth. Either way the call must fail with a typed error.
+            auto r = decrypt_packet_kem(rx_pk, wrong_sk, *packet);
+            REQUIRE_FALSE(r.has_value());
+            REQUIRE((r.error().code == ErrorCode::AeadAuthFailed ||
+                     r.error().code == ErrorCode::KemDecapsulateFailed));
         }
     };
 
@@ -487,19 +507,21 @@ TEST_CASE("PQC roundtrip with Ed25519 signer", "[e2e][pqc]") {
 
     auto packet = encrypt_packet_kem(kem_type, rx_pk, plaintext,
         EncryptOptions{.aad = aad, .signer = &hsm});
+    REQUIRE(packet.has_value());
 
     SECTION("signed packet verifies with correct signer pk") {
-        auto decrypted = decrypt_packet_kem(rx_pk, rx_sk, packet,
+        auto decrypted = decrypt_packet_kem(rx_pk, rx_sk, *packet,
             DecryptOptions{.expected_signer_ed25519_pk = sender.pk});
-        REQUIRE(decrypted == plaintext);
+        REQUIRE(decrypted.has_value());
+        REQUIRE(*decrypted == plaintext);
     }
 
     SECTION("signed packet rejected with wrong signer pk") {
         auto wrong = nocturne::gen_ed25519();
-        REQUIRE_THROWS_AS(
-            decrypt_packet_kem(rx_pk, rx_sk, packet,
-                DecryptOptions{.expected_signer_ed25519_pk = wrong.pk}),
-            std::runtime_error);
+        auto r = decrypt_packet_kem(rx_pk, rx_sk, *packet,
+            DecryptOptions{.expected_signer_ed25519_pk = wrong.pk});
+        REQUIRE_FALSE(r.has_value());
+        REQUIRE(r.error().code == ErrorCode::SignatureVerifyFailed);
     }
 
     std::filesystem::remove("test_pqc_signer_sk.bin");

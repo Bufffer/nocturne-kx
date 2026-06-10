@@ -22,10 +22,13 @@
 ///   is delegated to whatever @c ReplayDB / @c HSMInterface instance
 ///   the caller passes through @c EncryptOptions::replay_db /
 ///   @c EncryptOptions::signer.
-/// @par Exception safety
-///   Strong on the happy path. AEAD authentication failures, signature
-///   mismatches, replay-counter regressions, and rate-limit overruns all
-///   throw @c std::runtime_error with a human-readable message.
+/// @par Error contract (P6.1b)
+///   All four entry points return `Result<Bytes>`. Every adversarial or
+///   recoverable failure is a typed @ref Error — AEAD auth failure,
+///   signature mismatch, replay regression, stale rotation, rate-limit
+///   overrun, malformed wire bytes, KEM type/size mismatch. Exceptions
+///   are reserved for system faults: `sodium_init` failure
+///   (@c check_sodium throws), HSM key-file I/O, `std::bad_alloc`.
 
 #pragma once
 
@@ -113,14 +116,29 @@ struct DecryptOptions {
 /// @brief Encrypt @p plaintext to @p receiver_x25519_pk using classical
 ///        X25519 ECDH.
 ///
-/// @returns Serialized wire-format packet ready to transmit.
-[[nodiscard]] Bytes encrypt_packet(
+/// @return Serialized wire-format packet ready to transmit, or:
+///         - @c ErrorCode::RateLimited — per-receiver bucket exhausted,
+///         - @c ErrorCode::KeyAgreementFailed — X25519 stage rejected,
+///         - @c ErrorCode::HsmUnhealthy — @c opts.signer unhealthy,
+///         - KDF / AEAD / serialize errors propagated from the
+///           primitives (1xx / 2xx).
+[[nodiscard]] Result<Bytes> encrypt_packet(
     const std::array<std::uint8_t, crypto_kx_PUBLICKEYBYTES>& receiver_x25519_pk,
     const Bytes& plaintext,
     const EncryptOptions& opts = {});
 
 /// @brief Decrypt a packet previously produced by @ref encrypt_packet.
-[[nodiscard]] Bytes decrypt_packet(
+///
+/// @return Plaintext, or:
+///         - @c ErrorCode::RateLimited,
+///         - wire-format errors (2xx) from @ref deserialize,
+///         - @c ErrorCode::SignatureMissing / @c SignatureVerifyFailed /
+///           @c SignatureTypeMismatch — pinned-signer checks,
+///         - @c ErrorCode::RotationStale — @c rotation_id below
+///           @c opts.min_rotation_id,
+///         - @c ErrorCode::ReplayDetected — counter ≤ last seen,
+///         - @c ErrorCode::AeadAuthFailed — tag rejected.
+[[nodiscard]] Result<Bytes> decrypt_packet(
     const std::array<std::uint8_t, crypto_kx_PUBLICKEYBYTES>& receiver_x25519_pk,
     const std::array<std::uint8_t, crypto_kx_SECRETKEYBYTES>& receiver_x25519_sk,
     const Bytes& packet_bytes,
@@ -131,9 +149,12 @@ struct DecryptOptions {
 /// @param kem_type Must be a non-classical type
 ///                 (@c pqc::KEMType::HYBRID_X25519_MLKEM1024 or
 ///                 @c pqc::KEMType::PURE_MLKEM1024). Passing
-///                 @c CLASSIC_X25519 throws — use @ref encrypt_packet
-///                 instead.
-[[nodiscard]] Bytes encrypt_packet_kem(
+///                 @c CLASSIC_X25519 yields @c ErrorCode::KemTypeUnknown
+///                 — use @ref encrypt_packet instead.
+/// @return Serialized packet, or @c KemTypeUnknown / @c KemSizeMismatch /
+///         @c KemEncapsulateFailed / @c RateLimited plus the same
+///         primitive errors as @ref encrypt_packet.
+[[nodiscard]] Result<Bytes> encrypt_packet_kem(
     pqc::KEMType kem_type,
     const std::vector<std::uint8_t>& receiver_pk,
     const Bytes& plaintext,
@@ -141,7 +162,13 @@ struct DecryptOptions {
 
 /// @brief Decrypt a packet previously produced by @ref encrypt_packet_kem.
 ///        The KEM type is recovered from the packet header.
-[[nodiscard]] Bytes decrypt_packet_kem(
+///
+/// @return Plaintext, or @c PacketFlagInconsistent (not a KEM packet /
+///         X25519 mislabeled as PQC), @c KemTypeUnknown (adversarial
+///         type byte not compiled in), @c KemSizeMismatch,
+///         @c KemDecapsulateFailed, plus the same signature / replay /
+///         rotation / AEAD errors as @ref decrypt_packet.
+[[nodiscard]] Result<Bytes> decrypt_packet_kem(
     const std::vector<std::uint8_t>& receiver_pk,
     const std::vector<std::uint8_t>& receiver_sk,
     const Bytes& packet_bytes,
