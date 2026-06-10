@@ -84,6 +84,17 @@ namespace nocturne {
 ///     @c pqc_kem_ct.size() ≤ MAX_PQC_KEM_CT_SIZE.
 ///   - @c (flags & HasPqcSig) implies @c !pqc_sig.empty() and
 ///     @c pqc_sig.size() ≤ MAX_PQC_SIG_SIZE.
+// Wire contract: the v3 layout hard-codes these libsodium sizes (32B
+// X25519 pk, 24B XChaCha20 nonce, 64B Ed25519 sig). If a libsodium
+// upgrade ever changed them, serialized packets would silently become
+// incompatible — fail the build instead.
+static_assert(crypto_kx_PUBLICKEYBYTES == 32,
+              "wire format expects 32-byte X25519 public keys");
+static_assert(crypto_aead_xchacha20poly1305_ietf_NPUBBYTES == 24,
+              "wire format expects 24-byte XChaCha20-Poly1305 nonces");
+static_assert(crypto_sign_BYTES == 64,
+              "wire format expects 64-byte Ed25519 signatures");
+
 struct Packet {
     std::uint8_t                                                                 version{VERSION};
     std::uint8_t                                                                 flags{0};
@@ -132,7 +143,7 @@ struct PqcVerifierConfig {
 // -----------------------------------------------------------------------
 
 /// @brief Append @p v to @p out as four little-endian bytes.
-inline void write_u32_le(Bytes& out, std::uint32_t v) {
+constexpr void write_u32_le(Bytes& out, std::uint32_t v) {
     out.push_back(static_cast<std::uint8_t>(v & 0xff));
     out.push_back(static_cast<std::uint8_t>((v >> 8) & 0xff));
     out.push_back(static_cast<std::uint8_t>((v >> 16) & 0xff));
@@ -140,7 +151,7 @@ inline void write_u32_le(Bytes& out, std::uint32_t v) {
 }
 
 /// @brief Append @p v to @p out as eight little-endian bytes.
-inline void write_u64_le(Bytes& out, std::uint64_t v) {
+constexpr void write_u64_le(Bytes& out, std::uint64_t v) {
     for (int i = 0; i < 8; ++i) {
         out.push_back(static_cast<std::uint8_t>((v >> (8 * i)) & 0xff));
     }
@@ -149,7 +160,7 @@ inline void write_u64_le(Bytes& out, std::uint64_t v) {
 /// @brief Read four LE bytes from @p p as an unsigned 32-bit integer.
 /// @par Pre  @p p points at a buffer of at least 4 readable bytes.
 /// @par Post Return value equals @c p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24.
-[[nodiscard]] inline std::uint32_t read_u32_le(const std::uint8_t* p) noexcept {
+[[nodiscard]] constexpr std::uint32_t read_u32_le(const std::uint8_t* p) noexcept {
     return static_cast<std::uint32_t>(p[0])
          | (static_cast<std::uint32_t>(p[1]) << 8)
          | (static_cast<std::uint32_t>(p[2]) << 16)
@@ -157,7 +168,7 @@ inline void write_u64_le(Bytes& out, std::uint64_t v) {
 }
 
 /// @brief Read eight LE bytes from @p p as an unsigned 64-bit integer.
-[[nodiscard]] inline std::uint64_t read_u64_le(const std::uint8_t* p) noexcept {
+[[nodiscard]] constexpr std::uint64_t read_u64_le(const std::uint8_t* p) noexcept {
     std::uint64_t v = 0;
     for (int i = 0; i < 8; ++i) {
         v |= static_cast<std::uint64_t>(p[i]) << (8 * i);

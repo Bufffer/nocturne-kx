@@ -20,6 +20,7 @@
 #include "sig_interface.hpp"
 #include "mldsa_wrapper.hpp"
 #include "../pqc_config.hpp"
+#include "../../core/flags.hpp"
 #include "../../core/side_channel.hpp"
 
 #ifdef NOCTURNE_ENABLE_PQC
@@ -38,13 +39,19 @@ private:
     static constexpr size_t ED_SK_SIZE  = crypto_sign_SECRETKEYBYTES;  // 64
     static constexpr size_t ED_SIG_SIZE = crypto_sign_BYTES;           // 64
 
-    static constexpr size_t MLDSA_PK_SIZE  = 2592;
-    static constexpr size_t MLDSA_SK_SIZE  = 4896;
-    static constexpr size_t MLDSA_SIG_SIZE = 4627;
+    // ML-DSA halves derived from the wrapper's FIPS 204 constants so the
+    // two layers can never drift apart.
+    static constexpr size_t MLDSA_PK_SIZE  = MLDSAWrapper::PUBLIC_KEY_BYTES;
+    static constexpr size_t MLDSA_SK_SIZE  = MLDSAWrapper::SECRET_KEY_BYTES;
+    static constexpr size_t MLDSA_SIG_SIZE = MLDSAWrapper::SIGNATURE_BYTES;
 
     static constexpr size_t HYBRID_PK_SIZE  = ED_PK_SIZE  + MLDSA_PK_SIZE;   // 2624
     static constexpr size_t HYBRID_SK_SIZE  = ED_SK_SIZE  + MLDSA_SK_SIZE;   // 4960
     static constexpr size_t HYBRID_SIG_SIZE = ED_SIG_SIZE + MLDSA_SIG_SIZE;  // 4691
+
+    // Wire contract: the hybrid signature must fit the packet field cap.
+    static_assert(HYBRID_SIG_SIZE <= MAX_PQC_SIG_SIZE,
+                  "hybrid signature exceeds MAX_PQC_SIG_SIZE");
 
 public:
     HybridSig() = default;

@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -66,6 +67,20 @@ enum class Flag : std::uint8_t {
     HasPqcKem  = 0x04,
     HasPqcSig  = 0x08,
 };
+
+// Wire contract: every flag is a single distinct bit. has_single_bit
+// proves each is a power of two; the OR-sum equaling 0x0F proves no two
+// flags share a bit (a collision would shrink the OR below the sum).
+static_assert(std::has_single_bit(static_cast<std::uint8_t>(Flag::HasSig)) &&
+              std::has_single_bit(static_cast<std::uint8_t>(Flag::HasRatchet)) &&
+              std::has_single_bit(static_cast<std::uint8_t>(Flag::HasPqcKem)) &&
+              std::has_single_bit(static_cast<std::uint8_t>(Flag::HasPqcSig)),
+              "every Flag must be a single bit");
+static_assert((static_cast<std::uint8_t>(Flag::HasSig) |
+               static_cast<std::uint8_t>(Flag::HasRatchet) |
+               static_cast<std::uint8_t>(Flag::HasPqcKem) |
+               static_cast<std::uint8_t>(Flag::HasPqcSig)) == 0x0F,
+              "Flag bits must be distinct (wire values are frozen)");
 
 // -----------------------------------------------------------------------
 // Bitwise operators

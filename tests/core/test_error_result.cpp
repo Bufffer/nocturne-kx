@@ -145,6 +145,13 @@ TEST_CASE("Status (Result<void>) round-trip", "[foundation]") {
     REQUIRE(bad().error().code == ErrorCode::RateLimited);
 }
 
+// Compile-time proof of the ByteRange concept's accept/reject set.
+static_assert(nocturne::ByteRange<nocturne::Bytes>);
+static_assert(nocturne::ByteRange<std::array<std::uint8_t, 4>>);
+static_assert(nocturne::ByteRange<nocturne::BytesView>);
+static_assert(!nocturne::ByteRange<std::string>);          // char, not uint8_t
+static_assert(!nocturne::ByteRange<std::vector<int>>);     // wrong element type
+
 TEST_CASE("BytesView adapters cover container shapes", "[foundation]") {
     SECTION("from Bytes") {
         Bytes b{0x01, 0x02, 0x03};

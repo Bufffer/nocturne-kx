@@ -26,8 +26,10 @@
 #pragma once
 
 #include <array>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <ranges>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -64,31 +66,41 @@ using BytesView = std::span<const std::uint8_t>;
 using MutableBytesView = std::span<std::uint8_t>;
 
 // -----------------------------------------------------------------------
+// Concepts
+// -----------------------------------------------------------------------
+
+/// @brief Contiguous, sized range of bytes — @ref Bytes,
+///        `std::array<std::uint8_t, N>`, spans, and any future
+///        byte-buffer type. One concept replaces a per-container
+///        overload set on the adapters below.
+template <typename R>
+concept ByteRange =
+    std::ranges::contiguous_range<R> &&
+    std::ranges::sized_range<R> &&
+    std::same_as<std::ranges::range_value_t<R>, std::uint8_t>;
+
+// -----------------------------------------------------------------------
 // Adapters
 // -----------------------------------------------------------------------
 // Free functions, not constructors, so call sites read top-to-bottom
-// without nested temporaries. All noexcept and constexpr-safe where
-// the source container's data() is.
+// without nested temporaries. All noexcept and constexpr.
 // -----------------------------------------------------------------------
 
-/// @brief View over an owned Bytes buffer.
-/// @par Thread safety: Bound by the caller's synchronization of @p v.
+/// @brief View over any contiguous byte range (Bytes, array, span). A
+///        fixed-size array's static extent is intentionally erased —
+///        the API uses dynamic-extent spans so function signatures
+///        don't proliferate per array size.
+/// @par Thread safety: Bound by the caller's synchronization of @p r.
 /// @par Exception safety: noexcept.
-[[nodiscard]] inline BytesView as_view(const Bytes& v) noexcept {
-    return BytesView{v.data(), v.size()};
-}
-
-/// @brief View over a fixed-size byte array. The static extent is
-///        intentionally erased — the API uses dynamic-extent spans so
-///        function signatures don't proliferate per array size.
-template <std::size_t N>
-[[nodiscard]] inline BytesView as_view(const std::array<std::uint8_t, N>& a) noexcept {
-    return BytesView{a.data(), N};
+template <ByteRange R>
+[[nodiscard]] constexpr BytesView as_view(const R& r) noexcept {
+    return BytesView{std::ranges::data(r), std::ranges::size(r)};
 }
 
 /// @brief View over a `std::string_view`. Reinterprets char→uint8_t
 ///        with one well-defined cast; safe under [basic.lval] /
-///        [basic.types] for trivially copyable types.
+///        [basic.types] for trivially copyable types. (Not constexpr —
+///        reinterpret_cast is forbidden in constant evaluation.)
 [[nodiscard]] inline BytesView as_view(std::string_view s) noexcept {
     return BytesView{
         reinterpret_cast<const std::uint8_t*>(s.data()),
@@ -100,15 +112,13 @@ template <std::size_t N>
     return as_view(std::string_view{s});
 }
 
-/// @brief Mutable view over an owned Bytes buffer.
-[[nodiscard]] inline MutableBytesView as_mut_view(Bytes& v) noexcept {
-    return MutableBytesView{v.data(), v.size()};
-}
-
-/// @brief Mutable view over a fixed-size byte array.
-template <std::size_t N>
-[[nodiscard]] inline MutableBytesView as_mut_view(std::array<std::uint8_t, N>& a) noexcept {
-    return MutableBytesView{a.data(), N};
+/// @brief Mutable view over any contiguous byte range (Bytes, array).
+///        Rejects const ranges at compile time — `data()` on a const
+///        range yields `const std::uint8_t*`, which cannot seed a
+///        MutableBytesView.
+template <ByteRange R>
+[[nodiscard]] constexpr MutableBytesView as_mut_view(R& r) noexcept {
+    return MutableBytesView{std::ranges::data(r), std::ranges::size(r)};
 }
 
 }  // namespace nocturne

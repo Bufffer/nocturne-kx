@@ -21,6 +21,7 @@
 
 #include "sig_interface.hpp"
 #include "../pqc_config.hpp"
+#include "../../core/flags.hpp"
 #include "../../core/side_channel.hpp"
 
 #ifdef NOCTURNE_ENABLE_PQC
@@ -33,12 +34,20 @@ namespace nocturne {
 namespace pqc {
 
 class MLDSAWrapper : public SignatureScheme {
-private:
-    static constexpr const char* ALGORITHM_NAME = "ML-DSA-87";
-    // FIPS 204 fixed sizes for ML-DSA-87 (Level 5).
+public:
+    // FIPS 204 fixed sizes for ML-DSA-87 (Level 5). Public so composed
+    // schemes (HybridSig) derive their sizes from this single source of
+    // truth.
     static constexpr size_t PUBLIC_KEY_BYTES = 2592;
     static constexpr size_t SECRET_KEY_BYTES = 4896;
     static constexpr size_t SIGNATURE_BYTES  = 4627;
+
+    // Wire contract: the signature must fit the packet field cap.
+    static_assert(SIGNATURE_BYTES <= MAX_PQC_SIG_SIZE,
+                  "ML-DSA-87 signature exceeds MAX_PQC_SIG_SIZE");
+
+private:
+    static constexpr const char* ALGORITHM_NAME = "ML-DSA-87";
 
     struct OQSSIGDeleter {
         void operator()(OQS_SIG* p) { if (p) OQS_SIG_free(p); }

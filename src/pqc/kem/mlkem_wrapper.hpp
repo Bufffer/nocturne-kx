@@ -26,6 +26,7 @@
 
 #include "kem_interface.hpp"
 #include "../pqc_config.hpp"
+#include "../../core/flags.hpp"
 #include "../../core/side_channel.hpp"
 
 #ifdef NOCTURNE_ENABLE_PQC
@@ -45,13 +46,20 @@ namespace pqc {
  * with automatic cleanup and side-channel protection.
  */
 class MLKEMWrapper : public KEMInterface {
-private:
-    // FIPS 203 constants for ML-KEM-1024
-    static constexpr const char* ALGORITHM_NAME = "ML-KEM-1024";
+public:
+    // FIPS 203 fixed sizes for ML-KEM-1024. Public so composed schemes
+    // (HybridKEM) derive their sizes from this single source of truth.
     static constexpr size_t PUBLIC_KEY_BYTES = 1568;
     static constexpr size_t SECRET_KEY_BYTES = 3168;
     static constexpr size_t CIPHERTEXT_BYTES = 1568;
     static constexpr size_t SHARED_SECRET_BYTES = 32;
+
+    // Wire contract: the ciphertext must fit the packet field cap.
+    static_assert(CIPHERTEXT_BYTES <= MAX_PQC_KEM_CT_SIZE,
+                  "ML-KEM-1024 ciphertext exceeds MAX_PQC_KEM_CT_SIZE");
+
+private:
+    static constexpr const char* ALGORITHM_NAME = "ML-KEM-1024";
 
     /**
      * @brief RAII deleter for OQS_KEM

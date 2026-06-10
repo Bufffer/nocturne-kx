@@ -23,6 +23,7 @@
 #include "kem_interface.hpp"
 #include "mlkem_wrapper.hpp"
 #include "../pqc_config.hpp"
+#include "../../core/flags.hpp"
 #include "../../core/side_channel.hpp"
 
 #ifdef NOCTURNE_ENABLE_PQC
@@ -48,10 +49,15 @@ private:
     static constexpr size_t X25519_PK_SIZE = crypto_scalarmult_BYTES;  // 32
     static constexpr size_t X25519_SK_SIZE = crypto_scalarmult_SCALARBYTES;  // 32
 
-    // Combined sizes
-    static constexpr size_t HYBRID_PK_SIZE = X25519_PK_SIZE + 1568;  // 1600 bytes
-    static constexpr size_t HYBRID_SK_SIZE = X25519_SK_SIZE + 3168;  // 3200 bytes
-    static constexpr size_t HYBRID_CT_SIZE = 1 + X25519_PK_SIZE + 1568;  // 1601 bytes (with version)
+    // Combined sizes — ML-KEM halves derived from the wrapper's FIPS 203
+    // constants so the two layers can never drift apart.
+    static constexpr size_t HYBRID_PK_SIZE = X25519_PK_SIZE + MLKEMWrapper::PUBLIC_KEY_BYTES;      // 1600
+    static constexpr size_t HYBRID_SK_SIZE = X25519_SK_SIZE + MLKEMWrapper::SECRET_KEY_BYTES;      // 3200
+    static constexpr size_t HYBRID_CT_SIZE = 1 + X25519_PK_SIZE + MLKEMWrapper::CIPHERTEXT_BYTES;  // 1601 (with version)
+
+    // Wire contract: the hybrid ciphertext must fit the packet field cap.
+    static_assert(HYBRID_CT_SIZE <= MAX_PQC_KEM_CT_SIZE,
+                  "hybrid KEM ciphertext exceeds MAX_PQC_KEM_CT_SIZE");
 
     /**
      * @brief Combine two shared secrets using domain-separated KDF
