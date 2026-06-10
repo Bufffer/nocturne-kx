@@ -79,7 +79,7 @@ public:
         return kp;
     }
 
-    Signature sign(const uint8_t* message, size_t message_len,
+    Signature sign(BytesView message,
                    const std::vector<uint8_t>& secret_key) override {
         if (secret_key.size() != HYBRID_SK_SIZE) {
             throw std::invalid_argument(
@@ -92,7 +92,7 @@ public:
         std::vector<uint8_t> ed_sig(ED_SIG_SIZE);
         unsigned long long ed_siglen = 0;
         if (crypto_sign_detached(ed_sig.data(), &ed_siglen,
-                                 message, message_len,
+                                 message.data(), message.size(),
                                  secret_key.data()) != 0 ||
             ed_siglen != ED_SIG_SIZE) {
             throw std::runtime_error("Hybrid sig: Ed25519 sign failed");
@@ -101,7 +101,7 @@ public:
         // ML-DSA half — sk is the trailing 4896 B.
         std::vector<uint8_t> mldsa_sk(secret_key.begin() + ED_SK_SIZE,
                                       secret_key.end());
-        auto mldsa_sig = mldsa_.sign(message, message_len, mldsa_sk);
+        auto mldsa_sig = mldsa_.sign(message, mldsa_sk);
         side_channel::secure_zero_memory(mldsa_sk.data(), mldsa_sk.size());
 
         Signature out;
@@ -114,7 +114,7 @@ public:
         return out;
     }
 
-    bool verify(const uint8_t* message, size_t message_len,
+    bool verify(BytesView message,
                 const Signature& signature,
                 const std::vector<uint8_t>& public_key) override {
         if (signature.type != SigType::HYBRID_ED25519_MLDSA87) return false;
@@ -124,7 +124,7 @@ public:
         // Ed25519 half.
         if (crypto_sign_verify_detached(
                 signature.bytes.data(),
-                message, message_len,
+                message.data(), message.size(),
                 public_key.data()) != 0) {
             return false;
         }
@@ -136,7 +136,7 @@ public:
                                 signature.bytes.end());
         std::vector<uint8_t> mldsa_pk(public_key.begin() + ED_PK_SIZE,
                                       public_key.end());
-        return mldsa_.verify(message, message_len, mldsa_only, mldsa_pk);
+        return mldsa_.verify(message, mldsa_only, mldsa_pk);
     }
 
     SigType     get_type()        const override { return SigType::HYBRID_ED25519_MLDSA87; }

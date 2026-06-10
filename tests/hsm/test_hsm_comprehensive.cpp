@@ -52,10 +52,7 @@ public:
         secure_zero_memory(secret_key_.data(), secret_key_.size());
     }
 
-    std::array<uint8_t, crypto_sign_BYTES> sign(
-        const uint8_t* data,
-        size_t len) override {
-
+    std::array<uint8_t, crypto_sign_BYTES> sign(nocturne::BytesView data) override {
         if (!initialized_ || !authenticated_) {
             throw nocturne::hsm::HSMNotInitializedError();
         }
@@ -67,7 +64,7 @@ public:
 
         unsigned long long sig_len;
         crypto_sign_detached(signature.data(), &sig_len,
-                           data, len, secret_key_.data());
+                           data.data(), data.size(), secret_key_.data());
 
         flush_cache_line(secret_key_.data());
         memory_barrier();
@@ -78,17 +75,15 @@ public:
         return signature;
     }
 
-    bool verify(const uint8_t* data, size_t len,
-               const uint8_t* signature, size_t sig_len) override {
-
-        if (sig_len != crypto_sign_BYTES) {
+    bool verify(nocturne::BytesView data, nocturne::BytesView signature) override {
+        if (signature.size() != crypto_sign_BYTES) {
             return false;
         }
 
         random_delay();
 
         int result = crypto_sign_verify_detached(
-            signature, data, len, public_key_.data());
+            signature.data(), data.data(), data.size(), public_key_.data());
 
         verify_count_++;
         log_audit("VERIFY", result == 0 ? "SUCCESS" : "FAILURE");
@@ -198,39 +193,35 @@ TEST_CASE("HSM Signing and Verification", "[hsm][crypto]") {
         size_t len = strlen(message);
 
         // Sign
-        auto signature = hsm.sign(data, len);
+        auto signature = hsm.sign({data, len});
         REQUIRE(signature.size() == crypto_sign_BYTES);
 
         // Verify with correct key
-        REQUIRE(hsm.verify(data, len, signature.data(), signature.size()));
+        REQUIRE(hsm.verify({data, len}, signature));
 
         // Verify fails with wrong data
         const char* wrong_message = "Wrong message";
         const uint8_t* wrong_data = reinterpret_cast<const uint8_t*>(wrong_message);
-        REQUIRE_FALSE(hsm.verify(wrong_data, strlen(wrong_message),
-                                signature.data(), signature.size()));
+        REQUIRE_FALSE(hsm.verify({wrong_data, strlen(wrong_message)}, signature));
 
         // Verify fails with corrupted signature
         auto corrupted_sig = signature;
         corrupted_sig[0] ^= 0xFF;
-        REQUIRE_FALSE(hsm.verify(data, len,
-                                corrupted_sig.data(), corrupted_sig.size()));
+        REQUIRE_FALSE(hsm.verify({data, len}, corrupted_sig));
     }
 
     SECTION("Sign Empty Message") {
-        const uint8_t* empty = nullptr;
-        auto signature = hsm.sign(empty, 0);
+        auto signature = hsm.sign(nocturne::BytesView{});
         REQUIRE(signature.size() == crypto_sign_BYTES);
-        REQUIRE(hsm.verify(empty, 0, signature.data(), signature.size()));
+        REQUIRE(hsm.verify(nocturne::BytesView{}, signature));
     }
 
     SECTION("Sign Large Message") {
         std::vector<uint8_t> large_message(1024 * 1024); // 1 MB
         randombytes_buf(large_message.data(), large_message.size());
 
-        auto signature = hsm.sign(large_message.data(), large_message.size());
-        REQUIRE(hsm.verify(large_message.data(), large_message.size(),
-                          signature.data(), signature.size()));
+        auto signature = hsm.sign(large_message);
+        REQUIRE(hsm.verify(large_message, signature));
     }
 
     SECTION("Multiple Signatures Are Deterministic") {
@@ -238,8 +229,8 @@ TEST_CASE("HSM Signing and Verification", "[hsm][crypto]") {
         const uint8_t* data = reinterpret_cast<const uint8_t*>(message);
         size_t len = strlen(message);
 
-        auto sig1 = hsm.sign(data, len);
-        auto sig2 = hsm.sign(data, len);
+        auto sig1 = hsm.sign({data, len});
+        auto sig2 = hsm.sign({data, len});
 
         // Ed25519 signatures are deterministic
         REQUIRE(constant_time_compare(sig1.data(), sig2.data(), sig1.size()));
@@ -309,13 +300,12 @@ TEST_CASE("HSM Audit Logging", "[hsm][audit]") {
         size_t len = strlen(message);
 
         // Perform operations
-        auto sig = hsm.sign(data, len);
-        hsm.verify(data, len, sig.data(), sig.size());
+        auto sig = hsm.sign({data, len});
+        hsm.verify({data, len}, sig);
 
         // Wrong verification
         const char* wrong = "wrong";
-        hsm.verify(reinterpret_cast<const uint8_t*>(wrong),
-                  strlen(wrong), sig.data(), sig.size());
+        hsm.verify({reinterpret_cast<const uint8_t*>(wrong), strlen(wrong)}, sig);
 
         // Check audit trail
         auto audit = hsm.get_audit_trail(std::nullopt, std::nullopt);
@@ -347,12 +337,12 @@ TEST_CASE("HSM Audit Logging", "[hsm][audit]") {
         auto start = std::chrono::system_clock::now();
 
         const char* msg = "test";
-        hsm.sign(reinterpret_cast<const uint8_t*>(msg), strlen(msg));
+        hsm.sign({reinterpret_cast<const uint8_t*>(msg), strlen(msg)});
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         auto mid = std::chrono::system_clock::now();
 
-        hsm.sign(reinterpret_cast<const uint8_t*>(msg), strlen(msg));
+        hsm.sign({reinterpret_cast<const uint8_t*>(msg), strlen(msg)});
         auto end = std::chrono::system_clock::now();
 
         // Get all records after start
@@ -385,10 +375,9 @@ TEST_CASE("HSM Concurrency and Thread Safety", "[hsm][concurrency]") {
                                             " Message " + std::to_string(j);
                         auto data = reinterpret_cast<const uint8_t*>(message.data());
 
-                        auto sig = hsm.sign(data, message.size());
+                        auto sig = hsm.sign({data, message.size()});
 
-                        if (hsm.verify(data, message.size(),
-                                      sig.data(), sig.size())) {
+                        if (hsm.verify({data, message.size()}, sig)) {
                             success_count++;
                         } else {
                             failure_count++;
@@ -441,12 +430,12 @@ TEST_CASE("HSM Performance Benchmarks", "[hsm][benchmark]") {
     size_t len = strlen(message);
 
     BENCHMARK("Sign Operation") {
-        return hsm.sign(data, len);
+        return hsm.sign({data, len});
     };
 
-    auto signature = hsm.sign(data, len);
+    auto signature = hsm.sign({data, len});
     BENCHMARK("Verify Operation") {
-        return hsm.verify(data, len, signature.data(), signature.size());
+        return hsm.verify({data, len}, signature);
     };
 
     BENCHMARK("Random Generation (32 bytes)") {
@@ -465,9 +454,7 @@ TEST_CASE("HSM Error Handling", "[hsm][errors]") {
         auto data = reinterpret_cast<const uint8_t*>(msg);
 
         std::vector<uint8_t> wrong_length_sig(32); // Wrong size
-        REQUIRE_FALSE(hsm.verify(data, strlen(msg),
-                                wrong_length_sig.data(),
-                                wrong_length_sig.size()));
+        REQUIRE_FALSE(hsm.verify({data, strlen(msg)}, wrong_length_sig));
     }
 
     SECTION("Verify Null Signature") {
@@ -476,8 +463,7 @@ TEST_CASE("HSM Error Handling", "[hsm][errors]") {
         auto data = reinterpret_cast<const uint8_t*>(msg);
 
         std::array<uint8_t, crypto_sign_BYTES> null_sig{};
-        REQUIRE_FALSE(hsm.verify(data, strlen(msg),
-                                null_sig.data(), null_sig.size()));
+        REQUIRE_FALSE(hsm.verify({data, strlen(msg)}, null_sig));
     }
 }
 
@@ -492,17 +478,17 @@ TEST_CASE("HSM Operation Counters", "[hsm][metrics]") {
     size_t len = strlen(msg);
 
     // Perform operations
-    auto sig1 = hsm.sign(data, len);
+    auto sig1 = hsm.sign({data, len});
     REQUIRE(hsm.get_sign_count() == 1);
 
-    hsm.verify(data, len, sig1.data(), sig1.size());
+    hsm.verify({data, len}, sig1);
     REQUIRE(hsm.get_verify_count() == 1);
 
-    auto sig2 = hsm.sign(data, len);
-    auto sig3 = hsm.sign(data, len);
+    auto sig2 = hsm.sign({data, len});
+    auto sig3 = hsm.sign({data, len});
     REQUIRE(hsm.get_sign_count() == 3);
 
-    hsm.verify(data, len, sig2.data(), sig2.size());
-    hsm.verify(data, len, sig3.data(), sig3.size());
+    hsm.verify({data, len}, sig2);
+    hsm.verify({data, len}, sig3);
     REQUIRE(hsm.get_verify_count() == 3);
 }

@@ -55,14 +55,14 @@ public:
         nocturne::side_channel::secure_zero_memory(active_sk_.data(), active_sk_.size());
     }
 
-    std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
+    std::array<uint8_t, crypto_sign_BYTES> sign(BytesView data) override {
         std::lock_guard<std::mutex> lk(mu_);
         if (!have_active_) {
             throw HSMError("FileHSM: no active key (call generate_key or load a key first)");
         }
         std::array<uint8_t, crypto_sign_BYTES> sig{};
         unsigned long long siglen = 0;
-        if (crypto_sign_detached(sig.data(), &siglen, data, len, active_sk_.data()) != 0) {
+        if (crypto_sign_detached(sig.data(), &siglen, data.data(), data.size(), active_sk_.data()) != 0) {
             throw HSMError("FileHSM: crypto_sign_detached failed");
         }
         if (siglen != crypto_sign_BYTES) {
@@ -71,11 +71,11 @@ public:
         return sig;
     }
 
-    bool verify(const uint8_t* data, size_t len,
-                const uint8_t* signature, size_t sig_len) override {
+    bool verify(BytesView data, BytesView signature) override {
         std::lock_guard<std::mutex> lk(mu_);
-        if (!have_active_ || sig_len != crypto_sign_BYTES) return false;
-        return crypto_sign_verify_detached(signature, data, len, active_pk_.data()) == 0;
+        if (!have_active_ || signature.size() != crypto_sign_BYTES) return false;
+        return crypto_sign_verify_detached(signature.data(), data.data(), data.size(),
+                                           active_pk_.data()) == 0;
     }
 
     std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() override {

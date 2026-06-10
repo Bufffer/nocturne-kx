@@ -86,7 +86,7 @@ public:
         return kp;
     }
 
-    Signature sign(const uint8_t* message, size_t message_len,
+    Signature sign(BytesView message,
                    const std::vector<uint8_t>& secret_key) override {
         if (secret_key.size() != SECRET_KEY_BYTES) {
             throw std::invalid_argument(
@@ -102,7 +102,7 @@ public:
 
         OQS_STATUS rv = OQS_SIG_sign(sig_.get(),
                                      out.bytes.data(), &sig_len,
-                                     message, message_len,
+                                     message.data(), message.size(),
                                      secret_key.data());
         if (rv != OQS_SUCCESS) {
             throw std::runtime_error("ML-DSA-87 sign failed");
@@ -113,7 +113,7 @@ public:
         return out;
     }
 
-    bool verify(const uint8_t* message, size_t message_len,
+    bool verify(BytesView message,
                 const Signature& signature,
                 const std::vector<uint8_t>& public_key) override {
         if (signature.type != SigType::PURE_MLDSA87) return false;
@@ -123,7 +123,7 @@ public:
         if (Config::instance().side_channel_protection) side_channel::random_delay();
 
         OQS_STATUS rv = OQS_SIG_verify(sig_.get(),
-                                       message, message_len,
+                                       message.data(), message.size(),
                                        signature.bytes.data(), signature.bytes.size(),
                                        public_key.data());
         return rv == OQS_SUCCESS;

@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include "../../core/byte_span.hpp"
+
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -82,10 +84,13 @@ public:
 
     virtual SigKeyPair  generate_keypair() = 0;
 
-    virtual Signature   sign(const uint8_t* message, size_t message_len,
+    /// @param message View over the bytes under signature (P6.3: span
+    ///        instead of ptr+len — size is bound at construction and
+    ///        cannot disagree with the pointer downstream).
+    virtual Signature   sign(BytesView message,
                              const std::vector<uint8_t>& secret_key) = 0;
 
-    virtual bool        verify(const uint8_t* message, size_t message_len,
+    virtual bool        verify(BytesView message,
                                const Signature& signature,
                                const std::vector<uint8_t>& public_key) = 0;
 

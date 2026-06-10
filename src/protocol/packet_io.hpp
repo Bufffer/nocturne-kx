@@ -118,7 +118,7 @@ namespace nocturne::packet_io {
     if (!region) {
         return std::unexpected{region.error()};
     }
-    auto sig = signer.sign(region->data(), region->size());
+    auto sig = signer.sign(*region);
     p.flags |= FLAG_HAS_SIG;
     p.signature = sig;
     return ok();
@@ -150,7 +150,7 @@ namespace nocturne::packet_io {
     pqc::Signature sig;
     try {
         auto scheme = pqc::SignatureFactory{}.create(cfg.type);
-        sig = scheme->sign(region->data(), region->size(), cfg.secret_key);
+        sig = scheme->sign(*region, cfg.secret_key);
     } catch (const std::exception& e) {
         // Backend rejects (wrong sk size, unavailable scheme) arrive as
         // exceptions from the factory layer; fold them into the typed
@@ -226,8 +226,7 @@ namespace nocturne::packet_io {
         pqc::Signature sig_in;
         sig_in.type  = cfg.type;
         sig_in.bytes = p.pqc_sig;
-        valid = scheme->verify(region->data(), region->size(), sig_in,
-                               cfg.public_key);
+        valid = scheme->verify(*region, sig_in, cfg.public_key);
     } catch (const std::exception& e) {
         // Adversarial sig bytes can trip backend size checks that throw;
         // a reject is a reject — surface it as the typed verify failure.

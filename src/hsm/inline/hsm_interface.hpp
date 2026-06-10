@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "../../core/byte_span.hpp"
 #include "../../core/types.hpp"
 
 #include <array>
@@ -39,7 +40,7 @@ struct HSMInterface {
     /// @brief Sign @p data with this HSM's Ed25519 key.
     /// @return 64-byte detached signature.
     virtual std::array<std::uint8_t, crypto_sign_BYTES>
-        sign(const std::uint8_t* data, std::size_t len) = 0;
+        sign(nocturne::BytesView data) = 0;
 
     /// @brief Fetch the HSM's Ed25519 public key. nullopt if unavailable.
     [[nodiscard]] virtual std::optional<std::array<std::uint8_t, crypto_sign_PUBLICKEYBYTES>>

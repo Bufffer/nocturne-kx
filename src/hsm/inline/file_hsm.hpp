@@ -81,7 +81,7 @@ class FileHSM : public HSMInterface {
     }
 
     std::array<std::uint8_t, crypto_sign_BYTES>
-    sign(const std::uint8_t* data, std::size_t len) override {
+    sign(nocturne::BytesView data) override {
         if (!initialized_) throw nocturne::HSMError{"FileHSM not initialized"};
 
         // Lift the SK into a stack buffer for the libsodium call; zero it
@@ -89,8 +89,7 @@ class FileHSM : public HSMInterface {
         std::array<std::uint8_t, crypto_sign_SECRETKEYBYTES> temp_sk{};
         std::memcpy(temp_sk.data(), secure_sk_.get(), crypto_sign_SECRETKEYBYTES);
 
-        const nocturne::BytesView msg{data, len};
-        const auto sig = nocturne::ed25519_sign(msg, temp_sk);
+        const auto sig = nocturne::ed25519_sign(data, temp_sk);
 
         nocturne::side_channel::secure_zero_memory(temp_sk.data(), temp_sk.size());
         return sig;

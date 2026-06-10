@@ -509,7 +509,7 @@ public:
 
     // ==================== HSMInterface Implementation ====================
 
-    std::array<uint8_t, crypto_sign_BYTES> sign(const uint8_t* data, size_t len) override {
+    std::array<uint8_t, crypto_sign_BYTES> sign(BytesView data) override {
         if (!initialized_) {
             throw HSMError("PKCS#11 HSM not initialized");
         }
@@ -540,7 +540,8 @@ public:
             CK_ULONG sig_len = static_cast<CK_ULONG>(signature.size());
 
             rv = functions_->C_Sign(session,
-                                   const_cast<CK_BYTE*>(data), static_cast<CK_ULONG>(len),
+                                   const_cast<CK_BYTE*>(data.data()),
+                                   static_cast<CK_ULONG>(data.size()),
                                    signature.data(), &sig_len);
 
             if (rv != CKR_OK) {
@@ -561,10 +562,9 @@ public:
         }
     }
 
-    bool verify(const uint8_t* data, size_t len,
-               const uint8_t* signature, size_t sig_len) override {
+    bool verify(BytesView data, BytesView signature) override {
         if (!initialized_) return false;
-        if (sig_len != crypto_sign_BYTES) return false;
+        if (signature.size() != crypto_sign_BYTES) return false;
 
         // Load key cache if not loaded
         if (!key_cache_.valid) {
@@ -589,8 +589,10 @@ public:
             }
 
             rv = functions_->C_Verify(session,
-                                     const_cast<CK_BYTE*>(data), static_cast<CK_ULONG>(len),
-                                     const_cast<CK_BYTE*>(signature), static_cast<CK_ULONG>(sig_len));
+                                     const_cast<CK_BYTE*>(data.data()),
+                                     static_cast<CK_ULONG>(data.size()),
+                                     const_cast<CK_BYTE*>(signature.data()),
+                                     static_cast<CK_ULONG>(signature.size()));
 
             verify_operations_++;
             release_session(session);

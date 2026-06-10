@@ -560,8 +560,8 @@ TEST_CASE("FileHSM generate_key drives KeyRotationManager", "[hsm]") {
         // just reported — the smoke test that proves generate_key
         // actually wired the cache.
         const std::string msg = "rotation test";
-        auto sig = hsm->sign(reinterpret_cast<const uint8_t*>(msg.data()),
-                             msg.size());
+        auto sig = hsm->sign(
+            {reinterpret_cast<const uint8_t*>(msg.data()), msg.size()});
         REQUIRE(crypto_sign_verify_detached(
                     sig.data(),
                     reinterpret_cast<const uint8_t*>(msg.data()),

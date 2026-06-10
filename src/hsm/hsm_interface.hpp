@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../core/byte_span.hpp"
+
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -114,76 +116,55 @@ public:
 
     /**
      * @brief Sign data using Ed25519 (deterministic, RFC 8032)
-     * @param data Data to sign
-     * @param len Length of data
+     * @param data View over the bytes to sign
      * @return 64-byte Ed25519 signature
      * @throws HSMError if signing fails
      */
-    virtual std::array<uint8_t, crypto_sign_BYTES> sign(
-        const uint8_t* data,
-        size_t len
-    ) = 0;
+    virtual std::array<uint8_t, crypto_sign_BYTES> sign(BytesView data) = 0;
 
     /**
      * @brief Verify Ed25519 signature
-     * @param data Data that was signed
-     * @param len Length of data
-     * @param signature 64-byte signature
-     * @param sig_len Signature length (must be 64)
+     * @param data View over the bytes that were signed
+     * @param signature Detached signature (must be 64 bytes)
      * @return true if valid, false otherwise
      */
-    virtual bool verify(
-        const uint8_t* data,
-        size_t len,
-        const uint8_t* signature,
-        size_t sig_len
-    ) = 0;
+    virtual bool verify(BytesView data, BytesView signature) = 0;
 
     /**
      * @brief Encrypt data using authenticated encryption (AEAD)
      * @param plaintext Data to encrypt
-     * @param pt_len Length of plaintext
-     * @param aad Additional authenticated data (optional)
-     * @param aad_len Length of AAD
-     * @param ciphertext Output buffer (must be pt_len + tag_len)
+     * @param aad Additional authenticated data (may be empty)
+     * @param ciphertext Output buffer (must hold plaintext.size() + tag)
      * @param ct_len Output ciphertext length
      * @return true on success
      */
     virtual bool encrypt(
-        const uint8_t* plaintext,
-        size_t pt_len,
-        const uint8_t* aad,
-        size_t aad_len,
-        uint8_t* ciphertext,
-        size_t* ct_len
+        BytesView plaintext,
+        BytesView aad,
+        MutableBytesView ciphertext,
+        size_t& ct_len
     ) {
         // Default: not implemented (optional operation)
-        (void)plaintext; (void)pt_len; (void)aad; (void)aad_len;
-        (void)ciphertext; (void)ct_len;
+        (void)plaintext; (void)aad; (void)ciphertext; (void)ct_len;
         return false;
     }
 
     /**
      * @brief Decrypt data using authenticated encryption (AEAD)
      * @param ciphertext Data to decrypt
-     * @param ct_len Length of ciphertext
-     * @param aad Additional authenticated data (optional)
-     * @param aad_len Length of AAD
+     * @param aad Additional authenticated data (may be empty)
      * @param plaintext Output buffer
      * @param pt_len Output plaintext length
      * @return true on success, false if authentication fails
      */
     virtual bool decrypt(
-        const uint8_t* ciphertext,
-        size_t ct_len,
-        const uint8_t* aad,
-        size_t aad_len,
-        uint8_t* plaintext,
-        size_t* pt_len
+        BytesView ciphertext,
+        BytesView aad,
+        MutableBytesView plaintext,
+        size_t& pt_len
     ) {
         // Default: not implemented (optional operation)
-        (void)ciphertext; (void)ct_len; (void)aad; (void)aad_len;
-        (void)plaintext; (void)pt_len;
+        (void)ciphertext; (void)aad; (void)plaintext; (void)pt_len;
         return false;
     }
 

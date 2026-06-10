@@ -93,9 +93,9 @@ class PKCS11HSM : public HSMInterface {
     }
 
     std::array<std::uint8_t, crypto_sign_BYTES>
-    sign(const std::uint8_t* data, std::size_t len) override {
+    sign(nocturne::BytesView data) override {
         if (!impl_) throw nocturne::HSMError{"PKCS#11 HSM not initialized"};
-        return impl_->sign(data, len);
+        return impl_->sign(data);
     }
 
     [[nodiscard]] std::optional<std::array<std::uint8_t, crypto_sign_PUBLICKEYBYTES>>

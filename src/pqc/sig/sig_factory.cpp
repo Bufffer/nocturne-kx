@@ -45,7 +45,7 @@ public:
         return kp;
     }
 
-    Signature sign(const uint8_t* message, size_t message_len,
+    Signature sign(BytesView message,
                    const std::vector<uint8_t>& secret_key) override {
         if (secret_key.size() != SK_SIZE) {
             throw std::invalid_argument(
@@ -57,7 +57,7 @@ public:
         out.bytes.resize(SIG_SIZE);
         unsigned long long sig_len = 0;
         if (crypto_sign_detached(out.bytes.data(), &sig_len,
-                                 message, message_len,
+                                 message.data(), message.size(),
                                  secret_key.data()) != 0 ||
             sig_len != SIG_SIZE) {
             throw std::runtime_error("Ed25519 sign failed");
@@ -65,7 +65,7 @@ public:
         return out;
     }
 
-    bool verify(const uint8_t* message, size_t message_len,
+    bool verify(BytesView message,
                 const Signature& signature,
                 const std::vector<uint8_t>& public_key) override {
         if (signature.type != SigType::CLASSIC_ED25519) return false;
@@ -73,7 +73,7 @@ public:
         if (signature.bytes.size() != SIG_SIZE)         return false;
         return crypto_sign_verify_detached(
                    signature.bytes.data(),
-                   message, message_len,
+                   message.data(), message.size(),
                    public_key.data()) == 0;
     }
 
