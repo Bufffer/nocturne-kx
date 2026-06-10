@@ -31,6 +31,7 @@
 #include "../core/flags.hpp"
 #include "../core/types.hpp"
 #include "../hsm/inline/hsm_interface.hpp"
+#include "../pqc/sig/sig_factory.hpp"
 #include "packet.hpp"
 
 #include <array>
