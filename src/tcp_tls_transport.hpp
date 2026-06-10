@@ -337,8 +337,12 @@ class TlsAcceptor {
 public:
     TlsAcceptor(const std::string& bind_host, uint16_t port,
                 const TlsConfig& cfg)
-        : ctx_(detail::make_server_ctx(cfg)),
-          listen_sock_(detail::tcp_listen(bind_host, port, &local_port_)) {}
+        : ctx_(detail::make_server_ctx(cfg)) {
+        // Assign in the body: local_port_ is declared after listen_sock_,
+        // so writing it through tcp_listen's out-param during the member
+        // initializer list would be clobbered by its `= 0` default.
+        listen_sock_ = detail::tcp_listen(bind_host, port, &local_port_);
+    }
 
     ~TlsAcceptor() { close(); }
     TlsAcceptor(const TlsAcceptor&) = delete;
