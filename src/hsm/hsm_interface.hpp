@@ -1,5 +1,4 @@
-#ifndef NOCTURNE_HSM_INTERFACE_HPP
-#define NOCTURNE_HSM_INTERFACE_HPP
+#pragma once
 
 #include <array>
 #include <cstdint>
@@ -353,4 +352,3 @@ public:
 } // namespace hsm
 } // namespace nocturne
 
-#endif // NOCTURNE_HSM_INTERFACE_HPP

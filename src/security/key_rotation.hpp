@@ -1,5 +1,4 @@
-#ifndef NOCTURNE_SECURITY_KEY_ROTATION_HPP
-#define NOCTURNE_SECURITY_KEY_ROTATION_HPP
+#pragma once
 
 #include "../hsm/hsm_interface.hpp"
 #include <memory>
@@ -510,4 +509,3 @@ public:
 } // namespace security
 } // namespace nocturne
 
-#endif // NOCTURNE_SECURITY_KEY_ROTATION_HPP

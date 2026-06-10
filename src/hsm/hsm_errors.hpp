@@ -1,5 +1,4 @@
-#ifndef NOCTURNE_HSM_ERRORS_HPP
-#define NOCTURNE_HSM_ERRORS_HPP
+#pragma once
 
 #include <stdexcept>
 #include <string>
@@ -71,4 +70,3 @@ private:
 } // namespace hsm
 } // namespace nocturne
 
-#endif // NOCTURNE_HSM_ERRORS_HPP

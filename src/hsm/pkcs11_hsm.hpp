@@ -1,5 +1,4 @@
-#ifndef NOCTURNE_HSM_PKCS11_HSM_HPP
-#define NOCTURNE_HSM_PKCS11_HSM_HPP
+#pragma once
 
 #include "hsm_interface.hpp"
 #include "hsm_errors.hpp"
@@ -888,4 +887,3 @@ public:
 } // namespace hsm
 } // namespace nocturne
 
-#endif // NOCTURNE_HSM_PKCS11_HSM_HPP

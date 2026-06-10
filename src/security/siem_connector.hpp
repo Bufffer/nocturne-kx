@@ -1,5 +1,4 @@
-#ifndef NOCTURNE_SECURITY_SIEM_CONNECTOR_HPP
-#define NOCTURNE_SECURITY_SIEM_CONNECTOR_HPP
+#pragma once
 
 #include "audit_logger.hpp"
 #include <sstream>
@@ -844,4 +843,3 @@ public:
 } // namespace security
 } // namespace nocturne
 
-#endif // NOCTURNE_SECURITY_SIEM_CONNECTOR_HPP

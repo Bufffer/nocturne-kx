@@ -70,7 +70,7 @@ jobs:
     # Dedicated regression net for the PQC encrypt/decrypt path. Unlike the
     # ctest invocation above (which swallows failures with `|| true` because
     # a few suites flake on softhsm/network setup), this step intentionally
-    # propagates failures: a divergence in NOCTURNE_PROTOCOL_VERSION binding
+    # propagates failures: a divergence in pqc::PROTOCOL_VERSION binding
     # between sender and receiver (see commit 9b5c00b) would surface here.
     - name: PQC encrypt/decrypt roundtrip (must pass)
       working-directory: ${{github.workspace}}/build

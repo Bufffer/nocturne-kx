@@ -178,7 +178,7 @@ public:
         // Prepare output structures
         KEMCiphertext ct;
         ct.type = KEMType::PURE_MLKEM1024;
-        ct.version = NOCTURNE_PROTOCOL_VERSION;
+        ct.version = PROTOCOL_VERSION;
         ct.ciphertext.resize(CIPHERTEXT_BYTES);
 
         KEMSharedSecret ss;

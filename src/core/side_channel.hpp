@@ -1,5 +1,4 @@
-#ifndef NOCTURNE_CORE_SIDE_CHANNEL_HPP
-#define NOCTURNE_CORE_SIDE_CHANNEL_HPP
+#pragma once
 
 #include <cstdint>
 #include <cstring>
@@ -167,4 +166,3 @@ inline T cache_resistant_lookup(const T (&table)[N], size_t index) {
 } // namespace side_channel
 } // namespace nocturne
 
-#endif // NOCTURNE_CORE_SIDE_CHANNEL_HPP

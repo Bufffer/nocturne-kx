@@ -235,16 +235,16 @@ public:
 
         // 3. Combine secrets
         auto combined_secret = combine_secrets(
-            x25519_shared, mlkem_ss.secret, NOCTURNE_PROTOCOL_VERSION, "encapsulation");
+            x25519_shared, mlkem_ss.secret, PROTOCOL_VERSION, "encapsulation");
 
         // 4. Build hybrid ciphertext: [version || x25519_eph_pk || mlkem_ct]
         KEMCiphertext hybrid_ct;
         hybrid_ct.type = KEMType::HYBRID_X25519_MLKEM1024;
-        hybrid_ct.version = NOCTURNE_PROTOCOL_VERSION;
+        hybrid_ct.version = PROTOCOL_VERSION;
         hybrid_ct.ciphertext.reserve(HYBRID_CT_SIZE);
 
         // Version byte
-        hybrid_ct.ciphertext.push_back(static_cast<uint8_t>(NOCTURNE_PROTOCOL_VERSION));
+        hybrid_ct.ciphertext.push_back(static_cast<uint8_t>(PROTOCOL_VERSION));
 
         // X25519 ephemeral public key
         hybrid_ct.ciphertext.insert(hybrid_ct.ciphertext.end(),
@@ -319,10 +319,10 @@ public:
 
         // Parse hybrid ciphertext
         uint8_t version = ciphertext.ciphertext[0];
-        if (version != NOCTURNE_PROTOCOL_VERSION) {
+        if (version != PROTOCOL_VERSION) {
             throw std::runtime_error(
                 "Protocol version mismatch: expected " +
-                std::to_string(NOCTURNE_PROTOCOL_VERSION) + ", got " +
+                std::to_string(PROTOCOL_VERSION) + ", got " +
                 std::to_string(version));
         }
 

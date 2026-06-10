@@ -428,13 +428,13 @@ Result<Bytes> decrypt_packet_kem(
     pqc::KEMCiphertext ct;
     ct.type = kem_type;
     // HybridKEM::combine_secrets binds the derived shared secret to
-    // NOCTURNE_PROTOCOL_VERSION (the PQC protocol version, 4), NOT to
-    // the outer Nocturne packet version (still 3 for backward compat).
-    // The sender's encapsulate() uses NOCTURNE_PROTOCOL_VERSION here, so
-    // the receiver must mirror it — otherwise sender and receiver derive
+    // pqc::PROTOCOL_VERSION (the PQC protocol version, 4), NOT to the
+    // outer Nocturne packet version (still 3 for backward compat). The
+    // sender's encapsulate() uses pqc::PROTOCOL_VERSION here, so the
+    // receiver must mirror it — otherwise sender and receiver derive
     // different combined secrets and the AEAD tag fails to authenticate
     // even though the KEM math is correct.
-    ct.version = static_cast<std::uint32_t>(NOCTURNE_PROTOCOL_VERSION);
+    ct.version = pqc::PROTOCOL_VERSION;
     ct.ciphertext = p.pqc_kem_ct;
 
     pqc::KEMSharedSecret kem_ss;

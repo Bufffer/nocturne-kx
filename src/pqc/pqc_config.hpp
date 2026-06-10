@@ -15,11 +15,9 @@
 
 #pragma once
 
-// Nocturne-KX version with PQC support
-#define NOCTURNE_VERSION_MAJOR 4
-#define NOCTURNE_VERSION_MINOR 0
-#define NOCTURNE_VERSION_PATCH 0
-#define NOCTURNE_VERSION_STRING "4.0.0-pqc"
+#include <cstddef>
+#include <cstdint>
+#include <string_view>
 
 // ============================================================================
 // FEATURE FLAGS
@@ -80,33 +78,6 @@
 #endif
 
 // ============================================================================
-// SECURITY LEVELS
-// ============================================================================
-
-/**
- * @brief NIST Post-Quantum Security Levels
- *
- * Level 1: Equivalent to AES-128, breaking requires 2^143 operations
- * Level 2: Equivalent to SHA-256 collision, 2^207 operations
- * Level 3: Equivalent to AES-192, 2^170 operations
- * Level 4: Equivalent to SHA-384 collision, 2^272 operations
- * Level 5: Equivalent to AES-256, 2^298 operations (HIGHEST)
- *
- * Nocturne-KX targets Level 5 for maximum security.
- */
-#define NOCTURNE_PQC_SECURITY_LEVEL 5
-
-// ML-KEM (Kyber) variants
-#define MLKEM_512   1  // Level 1 (not used)
-#define MLKEM_768   3  // Level 3 (not used)
-#define MLKEM_1024  5  // Level 5 (USED)
-
-// ML-DSA (Dilithium) variants
-#define MLDSA_44   2  // Level 2 (not used)
-#define MLDSA_65   3  // Level 3 (not used)
-#define MLDSA_87   5  // Level 5 (USED)
-
-// ============================================================================
 // PERFORMANCE TUNING
 // ============================================================================
 
@@ -133,34 +104,6 @@
 #ifndef NOCTURNE_PQC_SIDE_CHANNEL_PROTECTION
 #define NOCTURNE_PQC_SIDE_CHANNEL_PROTECTION 1
 #endif
-
-// ============================================================================
-// WIRE FORMAT CONFIGURATION
-// ============================================================================
-
-/**
- * @brief Protocol version for PQC support
- *
- * Version 4: Adds PQC hybrid KEM and signatures
- * Version 3: Classic crypto only (X25519 + Ed25519)
- */
-#define NOCTURNE_PROTOCOL_VERSION 4
-
-/**
- * @brief Maximum packet overhead for hybrid PQC
- *
- * Hybrid packets contain both classic and PQC components:
- * - X25519 ephemeral PK: 32 bytes
- * - ML-KEM-1024 ciphertext: 1,568 bytes
- * - Total KEM overhead: ~1,600 bytes
- *
- * For signatures:
- * - Ed25519 signature: 64 bytes
- * - ML-DSA-87 signature: ~4,627 bytes
- * - Total signature overhead: ~4,691 bytes
- */
-#define NOCTURNE_HYBRID_KEM_OVERHEAD 1600
-#define NOCTURNE_HYBRID_SIG_OVERHEAD 4700
 
 // ============================================================================
 // TESTING AND DEBUGGING
@@ -226,6 +169,44 @@
 
 namespace nocturne {
 namespace pqc {
+
+// ----------------------------------------------------------------------------
+// Compile-time constants (P6.2: typed inline constexpr, not macros — they
+// participate in overload resolution, respect namespaces, and show up in
+// the debugger; only the #ifndef-guarded build toggles above stay macros
+// because they are legitimately overridable from the compiler command line).
+// ----------------------------------------------------------------------------
+
+/// Nocturne-KX release version with PQC support.
+inline constexpr int              VERSION_MAJOR  = 4;
+inline constexpr int              VERSION_MINOR  = 0;
+inline constexpr int              VERSION_PATCH  = 0;
+inline constexpr std::string_view VERSION_STRING = "4.0.0-pqc";
+
+/// @brief Wire protocol version for PQC support.
+///
+/// Version 4: adds PQC hybrid KEM and signatures.
+/// Version 3: classic crypto only (X25519 + Ed25519).
+///
+/// @warning Wire contract: this value is bound into the hybrid-KEM
+///          combined secret on BOTH encapsulate and decapsulate (see
+///          commit 9b5c00b — a divergence produces ciphertexts that pass
+///          every compile check but fail AEAD auth at runtime).
+inline constexpr std::uint32_t PROTOCOL_VERSION = 4;
+
+/// @brief NIST post-quantum security level targeted by Nocturne-KX.
+///
+/// Level 5 ≈ AES-256 (2^298 operations) — the highest defined level.
+/// ML-KEM-1024 (FIPS 203) and ML-DSA-87 (FIPS 204) are the Level-5
+/// parameter sets in use.
+inline constexpr int PQC_SECURITY_LEVEL = 5;
+
+/// @brief Approximate packet overhead of the hybrid PQC components.
+///
+/// KEM: X25519 ephemeral PK (32 B) + ML-KEM-1024 ciphertext (1568 B).
+/// Sig: Ed25519 (64 B) + ML-DSA-87 (~4627 B).
+inline constexpr std::size_t HYBRID_KEM_OVERHEAD = 1600;
+inline constexpr std::size_t HYBRID_SIG_OVERHEAD = 4700;
 
 /**
  * @brief PQC configuration structure (runtime)

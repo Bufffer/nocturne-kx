@@ -1,5 +1,4 @@
-#ifndef NOCTURNE_SECURITY_AUDIT_LOGGER_HPP
-#define NOCTURNE_SECURITY_AUDIT_LOGGER_HPP
+#pragma once
 
 #include <array>
 #include <cctype>
@@ -1081,4 +1080,3 @@ public:
 } // namespace security
 } // namespace nocturne
 
-#endif // NOCTURNE_SECURITY_AUDIT_LOGGER_HPP
