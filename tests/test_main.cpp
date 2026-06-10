@@ -74,9 +74,12 @@ TEST_CASE("Packet serialization", "[serialization]") {
     
     SECTION("Serialize and deserialize") {
         auto serialized = serialize(p);
-        REQUIRE(!serialized.empty());
-        
-        auto deserialized = deserialize(serialized);
+        REQUIRE(serialized.has_value());
+        REQUIRE(!serialized->empty());
+
+        auto deserialized_r = deserialize(*serialized);
+        REQUIRE(deserialized_r.has_value());
+        const auto& deserialized = *deserialized_r;
         REQUIRE(deserialized.version == p.version);
         REQUIRE(deserialized.flags == p.flags);
         REQUIRE(deserialized.rotation_id == p.rotation_id);
@@ -98,12 +101,14 @@ TEST_CASE("Key derivation", "[crypto]") {
     SECTION("Client-server key derivation") {
         auto client_tx = derive_tx_key_client(alice.pk, alice.sk, bob.pk);
         auto server_rx = derive_rx_key_server(alice.pk, bob.pk, bob.sk);
-        
-        REQUIRE(client_tx.size() == crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
-        REQUIRE(server_rx.size() == crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
-        
+
+        REQUIRE(client_tx.has_value());
+        REQUIRE(server_rx.has_value());
+        REQUIRE(client_tx->size() == crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
+        REQUIRE(server_rx->size() == crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
+
         // Keys should match (client tx = server rx)
-        REQUIRE(client_tx == server_rx);
+        REQUIRE(*client_tx == *server_rx);
     }
 }
 
@@ -120,26 +125,41 @@ TEST_CASE("AEAD encryption/decryption", "[crypto]") {
     
     SECTION("Basic encryption/decryption") {
         auto ciphertext = aead_encrypt_xchacha(key, nonce, aad, plaintext);
-        REQUIRE(ciphertext.size() > plaintext.size()); // Should include auth tag
-        
-        auto decrypted = aead_decrypt_xchacha(key, nonce, aad, ciphertext);
-        REQUIRE(decrypted == plaintext);
+        REQUIRE(ciphertext.has_value());
+        REQUIRE(ciphertext->size() > plaintext.size()); // Should include auth tag
+
+        auto decrypted = aead_decrypt_xchacha(key, nonce, aad, *ciphertext);
+        REQUIRE(decrypted.has_value());
+        REQUIRE(*decrypted == plaintext);
     }
-    
+
     SECTION("Tampered ciphertext should fail") {
         auto ciphertext = aead_encrypt_xchacha(key, nonce, aad, plaintext);
-        ciphertext[0] ^= 1; // Flip one bit
-        
-        REQUIRE_THROWS_AS(aead_decrypt_xchacha(key, nonce, aad, ciphertext), std::runtime_error);
+        REQUIRE(ciphertext.has_value());
+        (*ciphertext)[0] ^= 1; // Flip one bit
+
+        auto decrypted = aead_decrypt_xchacha(key, nonce, aad, *ciphertext);
+        REQUIRE_FALSE(decrypted.has_value());
+        REQUIRE(decrypted.error().code == ErrorCode::AeadAuthFailed);
     }
-    
+
     SECTION("Wrong key should fail") {
         auto ciphertext = aead_encrypt_xchacha(key, nonce, aad, plaintext);
-        
+        REQUIRE(ciphertext.has_value());
+
         std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> wrong_key{};
         randombytes_buf(wrong_key.data(), wrong_key.size());
-        
-        REQUIRE_THROWS_AS(aead_decrypt_xchacha(wrong_key, nonce, aad, ciphertext), std::runtime_error);
+
+        auto decrypted = aead_decrypt_xchacha(wrong_key, nonce, aad, *ciphertext);
+        REQUIRE_FALSE(decrypted.has_value());
+        REQUIRE(decrypted.error().code == ErrorCode::AeadAuthFailed);
+    }
+
+    SECTION("Truncated ciphertext is a length reject, not an auth reject") {
+        Bytes too_short = {1, 2, 3}; // Shorter than the Poly1305 tag
+        auto decrypted = aead_decrypt_xchacha(key, nonce, aad, too_short);
+        REQUIRE_FALSE(decrypted.has_value());
+        REQUIRE(decrypted.error().code == ErrorCode::PacketTruncated);
     }
 }
 
@@ -652,22 +672,38 @@ TEST_CASE("Error handling", "[errors]") {
     
     SECTION("Invalid packet deserialization") {
         Bytes invalid_data = {1, 2, 3}; // Too short
-        REQUIRE_THROWS_AS(deserialize(invalid_data), std::runtime_error);
+        auto r = deserialize(invalid_data);
+        REQUIRE_FALSE(r.has_value());
+        REQUIRE(r.error().code == ErrorCode::PacketTruncated);
     }
-    
+
     SECTION("Wrong version") {
         Packet p;
         p.version = 0xFF; // Invalid version
         auto serialized = serialize(p);
-        
-        REQUIRE_THROWS_AS(deserialize(serialized), std::runtime_error);
+        REQUIRE(serialized.has_value());
+
+        auto r = deserialize(*serialized);
+        REQUIRE_FALSE(r.has_value());
+        REQUIRE(r.error().code == ErrorCode::PacketUnknownVersion);
     }
-    
+
     SECTION("Flag mismatch") {
         Packet p;
         p.flags = FLAG_HAS_SIG; // Set flag but no signature
         auto serialized = serialize(p);
-        
-        REQUIRE_THROWS_AS(deserialize(serialized), std::runtime_error);
+        REQUIRE_FALSE(serialized.has_value());
+        REQUIRE(serialized.error().code == ErrorCode::PacketFlagInconsistent);
+    }
+
+    SECTION("Trailing bytes are rejected") {
+        Packet p;
+        auto serialized = serialize(p);
+        REQUIRE(serialized.has_value());
+        serialized->push_back(0x00);
+
+        auto r = deserialize(*serialized);
+        REQUIRE_FALSE(r.has_value());
+        REQUIRE(r.error().code == ErrorCode::PacketTrailingBytes);
     }
 }

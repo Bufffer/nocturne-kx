@@ -10,6 +10,11 @@
 /// chance to merge the libsodium call sequence with the surrounding
 /// AEAD bookkeeping without an extra TU boundary.
 ///
+/// **Error contract.** All functions return `Result<AeadKey>`; libsodium
+/// primitive failures map to @ref ErrorCode::AeadKeyDerivationFailed
+/// (hash/KDF stage) or @ref ErrorCode::KeyAgreementFailed (X25519
+/// session stage). No exceptions on the protocol path.
+///
 /// **Domain separation.** Every KDF here uses a literal info string
 /// (`"nocturne-tx-v3"`, `"nocturne-ratchet-v3"`, `"nocturne-kem-tx-v4"`)
 /// bound into the BLAKE2b key argument. The strings are part of the
@@ -17,7 +22,7 @@
 /// the old derivation. Tag new strings with the protocol version they
 /// land in.
 ///
-/// @version 1.0.0
+/// @version 2.0.0 (P6.1a: throws → Result<AeadKey>)
 /// @par Thread safety
 ///   All functions are pure (no shared mutable state). Concurrent calls
 ///   with disjoint inputs are safe.
@@ -25,11 +30,11 @@
 #pragma once
 
 #include "../core/byte_span.hpp"
+#include "../core/result.hpp"
 #include "../core/side_channel.hpp"
 
 #include <array>
 #include <cstdint>
-#include <stdexcept>
 #include <string_view>
 
 #include <sodium.h>
@@ -53,21 +58,23 @@ using AeadKey = std::array<std::uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYB
 /// @param session  Read-only view over the raw shared-secret bytes.
 /// @param info     Domain separator. Treated as raw bytes (no NUL).
 ///
-/// @par Pre  @p session is non-empty.
-/// @par Post Return value is the 32-byte BLAKE2b digest keyed by @p
-///           session over @p info.
-/// @par Exception safety: Strong. Throws @c std::runtime_error if
-///                        libsodium returns non-zero (cryptographic
-///                        primitive failure — should never happen for
-///                        valid inputs).
-[[nodiscard]] inline AeadKey
+/// @pre  @p session is non-empty.
+/// @post On success the value is the 32-byte BLAKE2b digest keyed by
+///       @p session over @p info.
+/// @return @c ErrorCode::AeadKeyDerivationFailed if libsodium returns
+///         non-zero (cryptographic primitive failure — should never
+///         happen for valid inputs).
+/// @par Exception safety
+///   No-throw on the protocol path; only allocation of the error
+///   message string on the failure branch could throw `std::bad_alloc`.
+[[nodiscard]] inline Result<AeadKey>
 derive_aead_key_from_session(BytesView session, std::string_view info) {
     AeadKey k{};
     if (crypto_generichash(k.data(), k.size(),
                            session.data(), session.size(),
                            reinterpret_cast<const std::uint8_t*>(info.data()),
                            info.size()) != 0) {
-        throw std::runtime_error{"key derivation failed"};
+        return err(ErrorCode::AeadKeyDerivationFailed, "key derivation failed");
     }
     return k;
 }
@@ -98,15 +105,19 @@ using X25519SecretKey = std::array<std::uint8_t, crypto_kx_SECRETKEYBYTES>;
 /// @param sk_eph      Sender's ephemeral secret key.
 /// @param pk_receiver Receiver's long-term public key.
 ///
-/// @par Pre  All three inputs are valid X25519 keypair material. Caller
-///           is responsible for keypair validation; libsodium's session-
-///           keys helper does basic sanity but not certificate-style
-///           ownership proof.
-/// @par Exception safety: Strong. Throws @c std::runtime_error if
-///                        libsodium reports a session-key failure.
-/// @par Side-channel: flush_cache_line + random_delay + secure_zero on
-///                    intermediates.
-[[nodiscard]] inline AeadKey derive_tx_key_client(
+/// @pre  All three inputs are valid X25519 keypair material. Caller
+///       is responsible for keypair validation; libsodium's session-
+///       keys helper does basic sanity but not certificate-style
+///       ownership proof.
+/// @return @c ErrorCode::KeyAgreementFailed if libsodium rejects the
+///         session-key computation; otherwise propagates the BLAKE2b
+///         stage's result.
+/// @par Exception safety
+///   No-throw on the protocol path. Intermediate session keys are
+///   zeroized on every exit path, success or failure.
+/// @par Side-channel
+///   flush_cache_line + random_delay + secure_zero on intermediates.
+[[nodiscard]] inline Result<AeadKey> derive_tx_key_client(
     const X25519PublicKey& pk_eph,
     const X25519SecretKey& sk_eph,
     const X25519PublicKey& pk_receiver)
@@ -115,7 +126,7 @@ using X25519SecretKey = std::array<std::uint8_t, crypto_kx_SECRETKEYBYTES>;
     if (crypto_kx_client_session_keys(rx.data(), tx.data(),
                                       pk_eph.data(), sk_eph.data(),
                                       pk_receiver.data()) != 0) {
-        throw std::runtime_error{"kx client session failed"};
+        return err(ErrorCode::KeyAgreementFailed, "kx client session failed");
     }
 
     side_channel::flush_cache_line(sk_eph.data());
@@ -136,8 +147,9 @@ using X25519SecretKey = std::array<std::uint8_t, crypto_kx_SECRETKEYBYTES>;
 ///
 /// Uses the *same* domain-separator string as @ref derive_tx_key_client
 /// so the resulting keys are equal — that's the entire point of the
-/// session-keys protocol.
-[[nodiscard]] inline AeadKey derive_rx_key_server(
+/// session-keys protocol. Error contract and side-channel behavior
+/// mirror @ref derive_tx_key_client.
+[[nodiscard]] inline Result<AeadKey> derive_rx_key_server(
     const X25519PublicKey& pk_sender_eph,
     const X25519PublicKey& pk_receiver,
     const X25519SecretKey& sk_receiver)
@@ -146,7 +158,7 @@ using X25519SecretKey = std::array<std::uint8_t, crypto_kx_SECRETKEYBYTES>;
     if (crypto_kx_server_session_keys(rx.data(), tx.data(),
                                       pk_receiver.data(), sk_receiver.data(),
                                       pk_sender_eph.data()) != 0) {
-        throw std::runtime_error{"kx server session failed"};
+        return err(ErrorCode::KeyAgreementFailed, "kx server session failed");
     }
 
     side_channel::flush_cache_line(sk_receiver.data());
@@ -175,9 +187,10 @@ using X25519SecretKey = std::array<std::uint8_t, crypto_kx_SECRETKEYBYTES>;
 /// step gives us domain separation against future protocol revisions
 /// that reuse the same KEM secret for different purposes.
 ///
-/// @par Pre  @p kem_secret has the libsodium-canonical 32-byte length.
-/// @par Exception safety: Strong. Throws on libsodium failure.
-[[nodiscard]] inline AeadKey derive_aead_key_from_kem_secret(
+/// @pre  @p kem_secret has the libsodium-canonical 32-byte length
+///       (enforced by the type).
+/// @return Propagates @ref derive_aead_key_from_session's result.
+[[nodiscard]] inline Result<AeadKey> derive_aead_key_from_kem_secret(
     const std::array<std::uint8_t, 32>& kem_secret,
     std::string_view info)
 {
@@ -200,12 +213,16 @@ using X25519SecretKey = std::array<std::uint8_t, crypto_kx_SECRETKEYBYTES>;
 /// @param prev_key  Current AEAD key.
 /// @param dh_shared View over the freshly-computed DH-shared bytes.
 ///
-/// @par Pre  @p dh_shared is non-empty.
-/// @par Exception safety: Strong. Throws on libsodium failure.
-/// @par Side-channel: zeroes the intermediate buffer holding
-///                    `prev_key || dh_shared` before returning.
-[[nodiscard]] inline AeadKey ratchet_mix(const AeadKey& prev_key,
-                                         BytesView      dh_shared)
+/// @pre  @p dh_shared is non-empty.
+/// @return @c ErrorCode::AeadKeyDerivationFailed on libsodium failure.
+/// @par Exception safety
+///   No-throw on the protocol path; the seed buffer allocation may
+///   throw `std::bad_alloc` (system fault).
+/// @par Side-channel
+///   Zeroes the intermediate buffer holding `prev_key || dh_shared`
+///   on every exit path before returning.
+[[nodiscard]] inline Result<AeadKey> ratchet_mix(const AeadKey& prev_key,
+                                                 BytesView      dh_shared)
 {
     Bytes seed;
     seed.reserve(prev_key.size() + dh_shared.size());
@@ -214,16 +231,18 @@ using X25519SecretKey = std::array<std::uint8_t, crypto_kx_SECRETKEYBYTES>;
 
     AeadKey new_key{};
     static constexpr char kInfo[] = "nocturne-ratchet-v3";
-    if (crypto_generichash(new_key.data(), new_key.size(),
-                           seed.data(), seed.size(),
-                           reinterpret_cast<const std::uint8_t*>(kInfo),
-                           sizeof(kInfo) - 1) != 0) {
-        side_channel::secure_zero_memory(seed.data(), seed.size());
-        throw std::runtime_error{"ratchet kdf failed"};
-    }
+    const int rc = crypto_generichash(
+        new_key.data(), new_key.size(),
+        seed.data(), seed.size(),
+        reinterpret_cast<const std::uint8_t*>(kInfo),
+        sizeof(kInfo) - 1);
 
     side_channel::secure_zero_memory(seed.data(), seed.size());
     side_channel::flush_cache_line(seed.data());
+
+    if (rc != 0) {
+        return err(ErrorCode::AeadKeyDerivationFailed, "ratchet kdf failed");
+    }
     return new_key;
 }
 

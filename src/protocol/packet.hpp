@@ -58,6 +58,7 @@
 #pragma once
 
 #include "../core/byte_span.hpp"
+#include "../core/result.hpp"
 #include "../core/flags.hpp"
 #include "../core/types.hpp"
 #include "../pqc/sig/sig_interface.hpp"
@@ -171,35 +172,45 @@ inline void write_u64_le(Bytes& out, std::uint64_t v) {
 /// @brief Serialize a Packet to its on-wire byte sequence.
 ///
 /// @param p Packet to serialize. The invariants listed under @ref Packet
-///          are checked; any violation throws @c std::runtime_error.
-/// @return Owned byte buffer containing the serialized packet.
+///          are checked; violations are returned as typed errors.
+/// @return Owned byte buffer containing the serialized packet, or:
+///         - @c ErrorCode::PacketFlagInconsistent — a flag bit is set
+///           but the corresponding payload field is missing/empty,
+///         - @c ErrorCode::PacketFieldOversized — a variable-length
+///           field exceeds its cap (@ref MAX_PQC_KEM_CT_SIZE,
+///           @ref MAX_PQC_SIG_SIZE).
 ///
-/// @par Pre  Caller has populated @p p such that every flag bit's
-///           corresponding payload field is present and within the
-///           size caps (@ref MAX_PQC_KEM_CT_SIZE, @ref MAX_PQC_SIG_SIZE).
-/// @par Post Returned buffer is consumable by @ref deserialize and the
-///           round trip is byte-exact for well-formed inputs.
+/// @pre  None beyond a constructed @p p — invariant violations are
+///       reported through the Result, not UB.
+/// @post On success the buffer is consumable by @ref deserialize and
+///       the round trip is byte-exact.
 /// @par Thread safety: Pure function; no shared state.
-/// @par Exception safety: Strong. The function either returns a fully
-///                        formed buffer or throws and leaves no
-///                        observable side effect.
-[[nodiscard]] Bytes serialize(const Packet& p);
+/// @par Exception safety
+///   No-throw on the protocol path; only `std::bad_alloc` from the
+///   output-buffer allocation can propagate (system fault).
+[[nodiscard]] Result<Bytes> serialize(const Packet& p);
 
 /// @brief Parse an on-wire byte sequence into a Packet.
 ///
 /// @param in Read-only byte view over the wire bytes.
-/// @return Decoded packet.
+/// @return Decoded packet, or:
+///         - @c ErrorCode::PacketTruncated — bytes ran out mid-field or
+///           the cursor arithmetic would overflow,
+///         - @c ErrorCode::PacketUnknownVersion — outer version byte
+///           not supported,
+///         - @c ErrorCode::PacketFieldOversized — a declared field
+///           length is zero where forbidden or exceeds its cap,
+///         - @c ErrorCode::PacketTrailingBytes — input continues past
+///           the last expected field.
 ///
-/// @par Pre  None — the deserializer is the trust boundary for adversarial
-///           input.
-/// @par Post On success, the returned Packet satisfies every invariant
-///           under @ref Packet.
+/// @pre  None — the deserializer is the trust boundary for adversarial
+///       input; every reject is a typed, expected outcome.
+/// @post On success, the returned Packet satisfies every invariant
+///       under @ref Packet.
 /// @par Thread safety: Pure function; no shared state.
-/// @par Exception safety: Strong. The function either returns a valid
-///                        Packet or throws @c std::runtime_error with a
-///                        diagnostic message describing the rejected
-///                        condition (truncated, oversized field,
-///                        unsupported version, trailing bytes).
-[[nodiscard]] Packet deserialize(BytesView in);
+/// @par Exception safety
+///   No-throw on the protocol path; only `std::bad_alloc` from
+///   variable-length field allocation can propagate (system fault).
+[[nodiscard]] Result<Packet> deserialize(BytesView in);
 
 }  // namespace nocturne

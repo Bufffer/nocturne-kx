@@ -24,31 +24,34 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         // Convert input to vector
         Bytes input(data, data + size);
         
-        // Test packet deserialization
-        try {
-            auto packet = deserialize(input);
-            
-            // Test serialization of deserialized packet
-            auto reserialized = serialize(packet);
-            
-            // Test deserialization of reserialized packet
-            auto redeserialized = deserialize(reserialized);
-            
+        // Test packet deserialization. Malformed input is a typed
+        // Result error now — no exception edge to catch.
+        if (auto packet = deserialize(input); packet.has_value()) {
+            // A packet accepted by the parser MUST reserialize and
+            // re-parse byte-consistently; any failure here is a bug.
+            auto reserialized = serialize(*packet);
+            if (!reserialized) {
+                __builtin_trap();
+            }
+
+            auto redeserialized = deserialize(*reserialized);
+            if (!redeserialized) {
+                __builtin_trap();
+            }
+
             // Verify round-trip consistency
-            if (packet.version != redeserialized.version ||
-                packet.flags != redeserialized.flags ||
-                packet.rotation_id != redeserialized.rotation_id ||
-                packet.counter != redeserialized.counter ||
-                packet.eph_pk != redeserialized.eph_pk ||
-                packet.nonce != redeserialized.nonce ||
-                packet.aad != redeserialized.aad ||
-                packet.ciphertext != redeserialized.ciphertext ||
-                packet.signature != redeserialized.signature) {
+            if (packet->version != redeserialized->version ||
+                packet->flags != redeserialized->flags ||
+                packet->rotation_id != redeserialized->rotation_id ||
+                packet->counter != redeserialized->counter ||
+                packet->eph_pk != redeserialized->eph_pk ||
+                packet->nonce != redeserialized->nonce ||
+                packet->aad != redeserialized->aad ||
+                packet->ciphertext != redeserialized->ciphertext ||
+                packet->signature != redeserialized->signature) {
                 // This should never happen - indicates a bug
                 __builtin_trap();
             }
-        } catch (const std::runtime_error&) {
-            // Expected for malformed input
         }
         
         // Test key derivation with random data — exercise the code paths
@@ -65,13 +68,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             std::memcpy(pk2.data(), data + crypto_kx_PUBLICKEYBYTES, crypto_kx_PUBLICKEYBYTES);
             std::memcpy(sk.data(), data + crypto_kx_PUBLICKEYBYTES * 2, crypto_kx_SECRETKEYBYTES);
 
-            try {
-                volatile auto tx_key = derive_tx_key_client(pk1, sk, pk2);
-                volatile auto rx_key = derive_rx_key_server(pk1, pk2, sk);
-                (void)tx_key; (void)rx_key;
-            } catch (const std::runtime_error&) {
-                // Expected for inputs that don't form a valid DH operation.
-            }
+            // Result-based now: invalid DH inputs come back as typed
+            // errors instead of exceptions. Either outcome is fine —
+            // we're exercising the paths for memory safety only.
+            auto tx_key = derive_tx_key_client(pk1, sk, pk2);
+            auto rx_key = derive_rx_key_server(pk1, pk2, sk);
+            (void)tx_key; (void)rx_key;
         }
         
         // Test AEAD with random data
@@ -92,27 +94,21 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             
             Bytes aad = {0xAA, 0xBB, 0xCC, 0xDD};
             
-            try {
-                auto ciphertext = aead_encrypt_xchacha(key, nonce, aad, plaintext);
-                auto decrypted = aead_decrypt_xchacha(key, nonce, aad, ciphertext);
-                
-                if (decrypted != plaintext) {
+            if (auto ciphertext = aead_encrypt_xchacha(key, nonce, aad, plaintext);
+                ciphertext.has_value()) {
+                auto decrypted = aead_decrypt_xchacha(key, nonce, aad, *ciphertext);
+                if (!decrypted || *decrypted != plaintext) {
                     __builtin_trap();
                 }
-                
-                // Test tampered ciphertext
-                if (ciphertext.size() > 0) {
-                    ciphertext[0] ^= 1;
-                    try {
-                        aead_decrypt_xchacha(key, nonce, aad, ciphertext);
-                        // Should have thrown
+
+                // Test tampered ciphertext — must come back as a typed
+                // AEAD auth failure, never as a success.
+                if (!ciphertext->empty()) {
+                    (*ciphertext)[0] ^= 1;
+                    if (aead_decrypt_xchacha(key, nonce, aad, *ciphertext).has_value()) {
                         __builtin_trap();
-                    } catch (const std::runtime_error&) {
-                        // Expected
                     }
                 }
-            } catch (const std::runtime_error&) {
-                // Expected for invalid keys/nonces
             }
         }
         

@@ -37,6 +37,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 
 #include <sodium.h>
@@ -76,7 +77,14 @@ namespace nocturne::packet_io {
         unsigned_p.pqc_sig.clear();
         unsigned_p.pqc_sig_type = 0;
     }
-    Bytes out = serialize(unsigned_p);
+    // P6.1a shim: serialize() now returns Result<Bytes>; this helper
+    // still throws until the P6.1b migration converts packet_io itself.
+    auto serialized = serialize(unsigned_p);
+    if (!serialized) {
+        throw std::runtime_error{std::string{serialized.error().name()} + ": "
+                                 + serialized.error().message};
+    }
+    Bytes out = std::move(*serialized);
     if (!session_id.empty()) {
         out.insert(out.end(), session_id.begin(), session_id.end());
     }

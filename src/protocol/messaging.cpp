@@ -14,6 +14,7 @@
 #include "packet_io.hpp"
 #include "../core/byte_span.hpp"
 #include "../core/flags.hpp"
+#include "../core/result.hpp"
 #include "../core/side_channel.hpp"
 #include "../core/types.hpp"
 #include "../pqc/kem/kem_factory.hpp"
@@ -58,6 +59,18 @@ namespace {
     return base;
 }
 
+/// P6.1a shim: primitives (kdf/aead/packet) now return Result<T> while
+/// these entry points still expose the throwing API. P6.1b converts the
+/// entry points themselves to Result and deletes this helper.
+template <typename T>
+[[nodiscard]] T unwrap(Result<T> r) {
+    if (!r) {
+        throw std::runtime_error{std::string{r.error().name()} + ": "
+                                 + r.error().message};
+    }
+    return std::move(*r);
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------
@@ -78,7 +91,7 @@ Bytes encrypt_packet(
     }
 
     auto eph = gen_x25519();
-    auto key = derive_tx_key_client(eph.pk, eph.sk, receiver_x25519_pk);
+    auto key = unwrap(derive_tx_key_client(eph.pk, eph.sk, receiver_x25519_pk));
 
     Packet p;
     p.version = VERSION;
@@ -106,7 +119,7 @@ Bytes encrypt_packet(
         if (crypto_scalarmult(dh_shared.data(), ratk.sk.data(), receiver_x25519_pk.data()) != 0) {
             throw std::runtime_error("dh failed");
         }
-        auto mixed = ratchet_mix(key, BytesView{dh_shared.data(), dh_shared.size()});
+        auto mixed = unwrap(ratchet_mix(key, BytesView{dh_shared.data(), dh_shared.size()}));
         side_channel::secure_zero_memory(key.data(), key.size());
         side_channel::secure_zero_memory(ratk.sk.data(), ratk.sk.size());
         side_channel::flush_cache_line(key.data());
@@ -115,7 +128,7 @@ Bytes encrypt_packet(
     }
 
     p.aad = opts.aad;
-    p.ciphertext = aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
+    p.ciphertext = unwrap(aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext));
 
     if (opts.signer != nullptr) {
         packet_io::attach_classical_signature(p, *opts.signer, opts.session_id);
@@ -124,7 +137,7 @@ Bytes encrypt_packet(
         packet_io::attach_pqc_signature(p, *opts.pqc_signer, opts.session_id);
     }
 
-    auto out = serialize(p);
+    auto out = unwrap(serialize(p));
 
     side_channel::secure_zero_memory(eph.sk.data(), eph.sk.size());
     side_channel::secure_zero_memory(key.data(), key.size());
@@ -149,7 +162,7 @@ Bytes decrypt_packet(
         throw std::runtime_error("Rate limit exceeded for decryption operation");
     }
 
-    Packet p = deserialize(packet_bytes);
+    Packet p = unwrap(deserialize(packet_bytes));
 
     if (opts.expected_signer_ed25519_pk.has_value()) {
         packet_io::verify_classical_signature(
@@ -176,7 +189,7 @@ Bytes decrypt_packet(
         opts.replay_db->set(rid, p.counter);
     }
 
-    auto key = derive_rx_key_server(p.eph_pk, receiver_x25519_pk, receiver_x25519_sk);
+    auto key = unwrap(derive_rx_key_server(p.eph_pk, receiver_x25519_pk, receiver_x25519_sk));
 
     if ((p.flags & FLAG_HAS_RATCHET) != 0) {
         if (!p.ratchet_pk.has_value()) {
@@ -187,13 +200,13 @@ Bytes decrypt_packet(
                               p.ratchet_pk->data()) != 0) {
             throw std::runtime_error("dh failed");
         }
-        auto mixed = ratchet_mix(key, BytesView{dh_shared.data(), dh_shared.size()});
+        auto mixed = unwrap(ratchet_mix(key, BytesView{dh_shared.data(), dh_shared.size()}));
         side_channel::secure_zero_memory(key.data(), key.size());
         side_channel::flush_cache_line(key.data());
         key = mixed;
     }
 
-    auto pt = aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext);
+    auto pt = unwrap(aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext));
 
     side_channel::secure_zero_memory(key.data(), key.size());
     side_channel::flush_cache_line(key.data());
@@ -238,7 +251,7 @@ Bytes encrypt_packet_kem(
     }
 
     auto [kem_ct, kem_ss] = kem->encapsulate(receiver_pk);
-    auto key = derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4");
+    auto key = unwrap(derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4"));
 
     Packet p;
     p.version = VERSION;
@@ -260,7 +273,7 @@ Bytes encrypt_packet_kem(
     }
 
     p.aad = opts.aad;
-    p.ciphertext = aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext);
+    p.ciphertext = unwrap(aead_encrypt_xchacha(key, p.nonce, p.aad, plaintext));
 
     if (opts.signer != nullptr) {
         packet_io::attach_classical_signature(p, *opts.signer, opts.session_id);
@@ -269,7 +282,7 @@ Bytes encrypt_packet_kem(
         packet_io::attach_pqc_signature(p, *opts.pqc_signer, opts.session_id);
     }
 
-    auto out = serialize(p);
+    auto out = unwrap(serialize(p));
 
     side_channel::secure_zero_memory(key.data(), key.size());
     side_channel::flush_cache_line(key.data());
@@ -285,7 +298,7 @@ Bytes decrypt_packet_kem(
 {
     check_sodium();
 
-    Packet p = deserialize(packet_bytes);
+    Packet p = unwrap(deserialize(packet_bytes));
 
     if ((p.flags & FLAG_HAS_PQC_KEM) == 0 || p.pqc_kem_ct.empty()) {
         throw std::runtime_error("packet is not a PQC/KEM packet");
@@ -352,9 +365,9 @@ Bytes decrypt_packet_kem(
     ct.version = static_cast<std::uint32_t>(NOCTURNE_PROTOCOL_VERSION);
     ct.ciphertext = p.pqc_kem_ct;
     auto kem_ss = kem->decapsulate(ct, receiver_sk);
-    auto key = derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4");
+    auto key = unwrap(derive_aead_key_from_kem_secret(kem_ss.secret, "nocturne-kem-tx-v4"));
 
-    auto pt = aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext);
+    auto pt = unwrap(aead_decrypt_xchacha(key, p.nonce, p.aad, p.ciphertext));
 
     side_channel::secure_zero_memory(key.data(), key.size());
     side_channel::flush_cache_line(key.data());

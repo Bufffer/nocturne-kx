@@ -839,7 +839,7 @@ int main(int argc, char** argv) {
             auto bob = nocturne::gen_x25519();
             auto client_tx = nocturne::derive_tx_key_client(alice.pk, alice.sk, bob.pk);
             auto server_rx = nocturne::derive_rx_key_server(alice.pk, bob.pk, bob.sk);
-            if (client_tx == server_rx) {
+            if (client_tx.has_value() && server_rx.has_value() && *client_tx == *server_rx) {
                 std::cout << "    ✓ Key derivation\n";
             } else {
                 throw std::runtime_error("key derivation failed");

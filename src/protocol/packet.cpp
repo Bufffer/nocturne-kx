@@ -4,7 +4,8 @@
 ///
 /// The deserializer is the project's trust boundary for adversarial
 /// bytes. Every bounds check, size cap, and integer-overflow guard
-/// lives here. Adding a field to the wire format means editing both
+/// lives here — each reject is a typed `Result` error, never an
+/// exception. Adding a field to the wire format means editing both
 /// halves of this file plus the @c Packet struct in the header — keep
 /// them in lockstep.
 
@@ -12,7 +13,6 @@
 
 #include <cstdint>
 #include <cstring>
-#include <stdexcept>
 
 namespace nocturne {
 
@@ -27,7 +27,36 @@ inline constexpr std::size_t MAX_CIPHERTEXT_SIZE = 1 * 1024 * 1024;  // 1 MiB
 
 }  // namespace
 
-[[nodiscard]] Bytes serialize(const Packet& p) {
+[[nodiscard]] Result<Bytes> serialize(const Packet& p) {
+    const Flag flags = flag_from_byte(p.flags);
+
+    if (has_any(flags, Flag::HasRatchet) && !p.ratchet_pk) {
+        return err(ErrorCode::PacketFlagInconsistent,
+                   "ratchet flag set but pk missing");
+    }
+    if (has_any(flags, Flag::HasPqcKem)) {
+        if (p.pqc_kem_ct.empty()) {
+            return err(ErrorCode::PacketFlagInconsistent,
+                       "pqc-kem flag set but ct missing");
+        }
+        if (p.pqc_kem_ct.size() > MAX_PQC_KEM_CT_SIZE) {
+            return err(ErrorCode::PacketFieldOversized, "pqc kem ct too large");
+        }
+    }
+    if (has_any(flags, Flag::HasPqcSig)) {
+        if (p.pqc_sig.empty()) {
+            return err(ErrorCode::PacketFlagInconsistent,
+                       "pqc-sig flag set but bytes missing");
+        }
+        if (p.pqc_sig.size() > MAX_PQC_SIG_SIZE) {
+            return err(ErrorCode::PacketFieldOversized, "pqc sig too large");
+        }
+    }
+    if (has_any(flags, Flag::HasSig) && !p.signature) {
+        return err(ErrorCode::PacketFlagInconsistent,
+                   "flag set but signature missing");
+    }
+
     Bytes out;
     out.reserve(
         1 + 1 + 4
@@ -35,13 +64,11 @@ inline constexpr std::size_t MAX_CIPHERTEXT_SIZE = 1 * 1024 * 1024;  // 1 MiB
         + p.nonce.size()
         + 8
         + (p.ratchet_pk ? crypto_kx_PUBLICKEYBYTES : 0)
-        + (has_any(flag_from_byte(p.flags), Flag::HasPqcKem)
-               ? (1 + 4 + p.pqc_kem_ct.size()) : 0)
+        + (has_any(flags, Flag::HasPqcKem) ? (1 + 4 + p.pqc_kem_ct.size()) : 0)
         + 4 + 4
         + p.aad.size()
         + p.ciphertext.size()
-        + (has_any(flag_from_byte(p.flags), Flag::HasPqcSig)
-               ? (1 + 4 + p.pqc_sig.size()) : 0)
+        + (has_any(flags, Flag::HasPqcSig) ? (1 + 4 + p.pqc_sig.size()) : 0)
         + (p.signature ? crypto_sign_BYTES : 0));
 
     out.push_back(p.version);
@@ -51,20 +78,11 @@ inline constexpr std::size_t MAX_CIPHERTEXT_SIZE = 1 * 1024 * 1024;  // 1 MiB
     out.insert(out.end(), p.nonce.begin(), p.nonce.end());
     write_u64_le(out, p.counter);
 
-    if (has_any(flag_from_byte(p.flags), Flag::HasRatchet)) {
-        if (!p.ratchet_pk) {
-            throw std::runtime_error{"ratchet flag set but pk missing"};
-        }
+    if (has_any(flags, Flag::HasRatchet)) {
         out.insert(out.end(), p.ratchet_pk->begin(), p.ratchet_pk->end());
     }
 
-    if (has_any(flag_from_byte(p.flags), Flag::HasPqcKem)) {
-        if (p.pqc_kem_ct.empty()) {
-            throw std::runtime_error{"pqc-kem flag set but ct missing"};
-        }
-        if (p.pqc_kem_ct.size() > MAX_PQC_KEM_CT_SIZE) {
-            throw std::runtime_error{"pqc kem ct too large"};
-        }
+    if (has_any(flags, Flag::HasPqcKem)) {
         out.push_back(p.pqc_kem_type);
         write_u32_le(out, static_cast<std::uint32_t>(p.pqc_kem_ct.size()));
         out.insert(out.end(), p.pqc_kem_ct.begin(), p.pqc_kem_ct.end());
@@ -83,138 +101,172 @@ inline constexpr std::size_t MAX_CIPHERTEXT_SIZE = 1 * 1024 * 1024;  // 1 MiB
     // flags are set (currently not exercised but reserved), stripping
     // the classical sig for canonical re-serialization still leaves
     // the PQC sig in place.
-    if (has_any(flag_from_byte(p.flags), Flag::HasPqcSig)) {
-        if (p.pqc_sig.empty()) {
-            throw std::runtime_error{"pqc-sig flag set but bytes missing"};
-        }
-        if (p.pqc_sig.size() > MAX_PQC_SIG_SIZE) {
-            throw std::runtime_error{"pqc sig too large"};
-        }
+    if (has_any(flags, Flag::HasPqcSig)) {
         out.push_back(p.pqc_sig_type);
         write_u32_le(out, static_cast<std::uint32_t>(p.pqc_sig.size()));
         out.insert(out.end(), p.pqc_sig.begin(), p.pqc_sig.end());
     }
 
-    if (has_any(flag_from_byte(p.flags), Flag::HasSig)) {
-        if (!p.signature) {
-            throw std::runtime_error{"flag set but signature missing"};
-        }
+    if (has_any(flags, Flag::HasSig)) {
         out.insert(out.end(), p.signature->begin(), p.signature->end());
     }
 
     return out;
 }
 
-[[nodiscard]] Packet deserialize(BytesView in) {
+[[nodiscard]] Result<Packet> deserialize(BytesView in) {
     Packet      p;
     std::size_t off = 0;
 
-    // Cursor advancement with overflow + bound + DoS protection. The
-    // lambda closes over @p in and @p off; bool result encodes "we
-    // safely consumed @p n bytes".
-    const auto need = [&](std::size_t n) {
+    // Cursor advancement with overflow + bound + DoS protection.
+    const auto need = [&](std::size_t n) -> Status {
         if (n > SIZE_MAX - off) {
-            throw std::runtime_error{"packet size overflow detected"};
+            return err(ErrorCode::PacketTruncated, "packet size overflow detected");
         }
         if (off + n > in.size()) {
-            throw std::runtime_error{"truncated packet detected"};
+            return err(ErrorCode::PacketTruncated, "truncated packet detected");
         }
         if (n > MAX_PACKET_SIZE) {
-            throw std::runtime_error{"packet size exceeds maximum allowed"};
+            return err(ErrorCode::PacketFieldOversized,
+                       "packet size exceeds maximum allowed");
         }
+        return ok();
     };
 
-    const auto get = [&](void* dst, std::size_t n) {
-        need(n);
+    // Checked read: bounds-verify then copy @p n bytes into @p dst.
+    const auto get = [&](void* dst, std::size_t n) -> Status {
+        if (auto s = need(n); !s) {
+            return s;
+        }
+        std::memcpy(dst, in.data() + off, n);
+        off += n;
+        return ok();
+    };
+
+    // Unchecked read — only valid inside a region already covered by a
+    // prior need() over the fixed-size prefix.
+    const auto take = [&](void* dst, std::size_t n) {
         std::memcpy(dst, in.data() + off, n);
         off += n;
     };
 
     // Fixed-prefix sanity: header (1+1+4+pk+nonce+8) and length-prefix
     // pair (4+4) must all fit. The trailing length fields are read out
-    // of order below — this just bounds the whole header in one check.
-    need(1 + 1 + 4
-         + crypto_kx_PUBLICKEYBYTES
-         + crypto_aead_xchacha20poly1305_ietf_NPUBBYTES
-         + 8 + 4 + 4);
+    // of order below — this just bounds the whole header in one check,
+    // which also licenses the unchecked take() reads of the fixed
+    // fields (70 bytes consumed against a 78-byte bound).
+    if (auto s = need(1 + 1 + 4
+                      + crypto_kx_PUBLICKEYBYTES
+                      + crypto_aead_xchacha20poly1305_ietf_NPUBBYTES
+                      + 8 + 4 + 4); !s) {
+        return std::unexpected{s.error()};
+    }
 
-    get(&p.version, 1);
-    get(&p.flags, 1);
+    take(&p.version, 1);
+    take(&p.flags, 1);
 
     std::uint8_t tmp4[4];
-    get(tmp4, 4);
+    take(tmp4, 4);
     p.rotation_id = read_u32_le(tmp4);
 
-    get(p.eph_pk.data(), p.eph_pk.size());
-    get(p.nonce.data(), p.nonce.size());
+    take(p.eph_pk.data(), p.eph_pk.size());
+    take(p.nonce.data(), p.nonce.size());
 
     std::uint8_t tmp8[8];
-    get(tmp8, 8);
+    take(tmp8, 8);
     p.counter = read_u64_le(tmp8);
 
     const Flag flags = flag_from_byte(p.flags);
 
     if (has_any(flags, Flag::HasRatchet)) {
         std::array<std::uint8_t, crypto_kx_PUBLICKEYBYTES> rpk{};
-        get(rpk.data(), rpk.size());
+        if (auto s = get(rpk.data(), rpk.size()); !s) {
+            return std::unexpected{s.error()};
+        }
         p.ratchet_pk = rpk;
     }
 
     if (has_any(flags, Flag::HasPqcKem)) {
-        get(&p.pqc_kem_type, 1);
-        get(tmp4, 4);
+        if (auto s = get(&p.pqc_kem_type, 1); !s) {
+            return std::unexpected{s.error()};
+        }
+        if (auto s = get(tmp4, 4); !s) {
+            return std::unexpected{s.error()};
+        }
         const std::uint32_t kem_ct_len = read_u32_le(tmp4);
         if (kem_ct_len == 0 || kem_ct_len > MAX_PQC_KEM_CT_SIZE) {
-            throw std::runtime_error{"pqc kem ct size out of bounds"};
+            return err(ErrorCode::PacketFieldOversized,
+                       "pqc kem ct size out of bounds");
         }
         p.pqc_kem_ct.resize(kem_ct_len);
-        get(p.pqc_kem_ct.data(), kem_ct_len);
+        if (auto s = get(p.pqc_kem_ct.data(), kem_ct_len); !s) {
+            return std::unexpected{s.error()};
+        }
     }
 
-    get(tmp4, 4);
+    if (auto s = get(tmp4, 4); !s) {
+        return std::unexpected{s.error()};
+    }
     const std::uint32_t aad_len = read_u32_le(tmp4);
-    get(tmp4, 4);
+    if (auto s = get(tmp4, 4); !s) {
+        return std::unexpected{s.error()};
+    }
     const std::uint32_t ct_len = read_u32_le(tmp4);
 
     if (p.version != VERSION) {
-        throw std::runtime_error{"unsupported version"};
+        return err(ErrorCode::PacketUnknownVersion, "unsupported version");
     }
     if (aad_len > MAX_AAD_SIZE) {
-        throw std::runtime_error{"AAD size exceeds maximum allowed"};
+        return err(ErrorCode::PacketFieldOversized,
+                   "AAD size exceeds maximum allowed");
     }
     if (ct_len > MAX_CIPHERTEXT_SIZE) {
-        throw std::runtime_error{"ciphertext size exceeds maximum allowed"};
+        return err(ErrorCode::PacketFieldOversized,
+                   "ciphertext size exceeds maximum allowed");
     }
 
     if (aad_len) {
         p.aad.resize(aad_len);
-        get(p.aad.data(), aad_len);
+        if (auto s = get(p.aad.data(), aad_len); !s) {
+            return std::unexpected{s.error()};
+        }
     }
     if (ct_len) {
         p.ciphertext.resize(ct_len);
-        get(p.ciphertext.data(), ct_len);
+        if (auto s = get(p.ciphertext.data(), ct_len); !s) {
+            return std::unexpected{s.error()};
+        }
     }
 
     // Mirror serialize()'s ordering: PQC sig block before classical sig.
     if (has_any(flags, Flag::HasPqcSig)) {
-        get(&p.pqc_sig_type, 1);
-        get(tmp4, 4);
+        if (auto s = get(&p.pqc_sig_type, 1); !s) {
+            return std::unexpected{s.error()};
+        }
+        if (auto s = get(tmp4, 4); !s) {
+            return std::unexpected{s.error()};
+        }
         const std::uint32_t sig_len = read_u32_le(tmp4);
         if (sig_len == 0 || sig_len > MAX_PQC_SIG_SIZE) {
-            throw std::runtime_error{"pqc sig size out of bounds"};
+            return err(ErrorCode::PacketFieldOversized,
+                       "pqc sig size out of bounds");
         }
         p.pqc_sig.resize(sig_len);
-        get(p.pqc_sig.data(), sig_len);
+        if (auto s = get(p.pqc_sig.data(), sig_len); !s) {
+            return std::unexpected{s.error()};
+        }
     }
 
     if (has_any(flags, Flag::HasSig)) {
         std::array<std::uint8_t, crypto_sign_BYTES> sig{};
-        get(sig.data(), sig.size());
+        if (auto s = get(sig.data(), sig.size()); !s) {
+            return std::unexpected{s.error()};
+        }
         p.signature = sig;
     }
 
     if (off != in.size()) {
-        throw std::runtime_error{"trailing bytes in packet"};
+        return err(ErrorCode::PacketTrailingBytes, "trailing bytes in packet");
     }
 
     return p;
