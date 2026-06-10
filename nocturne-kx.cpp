@@ -76,6 +76,15 @@
 #include "src/protocol/messaging.hpp"
 #include <iomanip>
 
+// TLS transport subcommands (tls-send / tls-recv) are CLI-only: the fuzzer
+// and unit-test builds include this TU but exclude main(), and must not
+// grow an OpenSSL link dependency.
+#if defined(NOCTURNE_ENABLE_TLS_TRANSPORT) && \
+    !defined(NOCTURNE_FUZZER_BUILD) && !defined(NOCTURNE_UNIT_TEST)
+  #define NOCTURNE_CLI_TLS 1
+  #include "src/tcp_tls_transport.hpp"
+#endif
+
 #include <sodium.h>
 
 // Platform-specific headers used to live here, but the symbols that needed
@@ -185,6 +194,19 @@ Subcommands:
       KEM mode is auto-detected from the packet header. The rx-pk/rx-sk file
       sizes must match the mode: 32B for X25519, 1600B/3200B for hybrid,
       1568B/3168B for mlkem.
+
+  tls-send --host <h> --port <n> --in <pkt>
+           [--ca <pem>] [--sni <name>] [--cert <pem> --key <pem>]
+      Sends one encrypted Nocturne packet (produced by `encrypt`) to a
+      tls-recv peer over TLS 1.3. --ca enables server certificate
+      verification (add --sni for hostname checking); --cert/--key present
+      a client certificate (mTLS). Requires a build with OpenSSL.
+
+  tls-recv --port <n> --cert <pem> --key <pem> --out <pkt>
+           [--bind <host>] [--ca <pem> --require-client-cert]
+      Accepts one TLS 1.3 connection, receives one Nocturne packet, and
+      writes it to --out (then use `decrypt`). --require-client-cert
+      enforces mTLS against the --ca bundle.
 
   self-test
       -> Runs a suite of self-tests to verify basic functionality.
@@ -682,6 +704,121 @@ int main(int argc, char** argv) {
             }
             write_all(out, pt);
             return 0;
+        }
+
+        if (cmd == "tls-send" || cmd == "tls-recv") {
+#ifndef NOCTURNE_CLI_TLS
+            std::cerr << "ERR: this binary was built without the TLS transport "
+                         "(ENABLE_TLS_TRANSPORT=OFF or OpenSSL missing)\n";
+            return 2;
+#else
+            using nocturne::transport::FeatureSet;
+            using nocturne::transport::Frame;
+            using nocturne::transport::FrameType;
+            using nocturne::transport::Session;
+            using nocturne::transport::tls::TlsAcceptor;
+            using nocturne::transport::tls::TlsConfig;
+            using nocturne::transport::tls::TcpTlsTransport;
+
+            std::string host, bind_host, sni;
+            std::filesystem::path cert, key, ca, in, out;
+            uint16_t port = 0;
+            bool require_client_cert = false;
+
+            for (int i = 2; i < argc; ++i) {
+                std::string a = argv[i];
+                auto need = [&](int){ if (i+1>=argc) throw std::runtime_error("missing value for " + a); return std::string(argv[++i]); };
+
+                // Skip global options (already parsed in main)
+                if (a=="--rate-limit-store" || a=="--audit-log" || a=="--audit-sign-key" ||
+                    a=="--audit-anchor" || a=="--audit-worm-dir" || a=="--tpm-counter" || a=="--hsm-pass") {
+                    need(1);
+                    continue;
+                }
+
+                if      (a=="--host") host = need(1);
+                else if (a=="--bind") bind_host = need(1);
+                else if (a=="--port") {
+                    unsigned long v = std::stoul(need(1));
+                    if (v == 0 || v > 65535) throw std::runtime_error("--port out of range (1-65535)");
+                    port = static_cast<uint16_t>(v);
+                }
+                else if (a=="--cert") cert = need(1);
+                else if (a=="--key") key = need(1);
+                else if (a=="--ca") ca = need(1);
+                else if (a=="--sni") sni = need(1);
+                else if (a=="--require-client-cert") require_client_cert = true;
+                else if (a=="--in") in = need(1);
+                else if (a=="--out") out = need(1);
+                else throw std::runtime_error("unknown arg: " + a);
+            }
+            if (port == 0) throw std::runtime_error("missing required argument: --port");
+
+            TlsConfig cfg;
+            cfg.cert_pem_path = cert.string();
+            cfg.key_pem_path  = key.string();
+            if (!ca.empty()) cfg.ca_pem_path = ca.string();
+            cfg.require_client_cert = require_client_cert;
+            cfg.sni_hostname = sni;
+
+            if (cmd == "tls-send") {
+                if (host.empty() || in.empty()) throw std::runtime_error("tls-send requires --host and --in");
+                auto pkt = read_all(in);
+
+                Session sess(1, FeatureSet{});
+                TcpTlsTransport t(sess, host, port, cfg);
+                Frame df = sess.make_data(/*aad=*/{}, pkt);
+                t.send(df);
+
+                // Wait for the receiver's ACK before declaring success.
+                for (;;) {
+                    auto fr = t.receive_blocking();
+                    if (!fr) throw std::runtime_error("peer closed before acknowledging packet");
+                    if (static_cast<FrameType>(fr->header.type) == FrameType::ACK) {
+                        sess.handle_feedback(*fr);
+                        if (fr->ack->ack_seq >= df.header.seq) break;
+                    } else if (static_cast<FrameType>(fr->header.type) == FrameType::NAK) {
+                        throw std::runtime_error("receiver NAKed packet (seq " +
+                                                 std::to_string(fr->nak->nak_seq) + ")");
+                    }
+                }
+                t.send(sess.make_close());
+                t.close();
+                std::cout << "Sent " << pkt.size() << " byte packet to " << host
+                          << ":" << port << " (TLS 1.3, ACK seq " << df.header.seq << ")\n";
+                return 0;
+            }
+
+            // tls-recv
+            if (cert.empty() || key.empty() || out.empty()) {
+                throw std::runtime_error("tls-recv requires --cert, --key and --out");
+            }
+            TlsAcceptor acc(bind_host, port, cfg);
+            std::cout << "Listening on " << (bind_host.empty() ? "*" : bind_host)
+                      << ":" << acc.local_port() << " (TLS 1.3"
+                      << (require_client_cert ? ", mTLS required" : "") << ")...\n";
+
+            Session sess(1, FeatureSet{});
+            TcpTlsTransport t = acc.accept(sess);
+            std::optional<nocturne::Bytes> received;
+            for (;;) {
+                auto fr = t.receive_blocking();
+                if (!fr) break; // peer closed
+                if (auto fb = sess.on_receive(*fr)) t.send(*fb);
+                if (static_cast<FrameType>(fr->header.type) == FrameType::DATA) {
+                    received = fr->data->ciphertext;
+                } else if (static_cast<FrameType>(fr->header.type) == FrameType::CLOSE) {
+                    break;
+                }
+            }
+            t.close();
+            acc.close();
+            if (!received) throw std::runtime_error("connection ended without a DATA frame");
+            write_all(out, *received);
+            std::cout << "Received " << received->size() << " byte packet -> " << out
+                      << " (decrypt it with `nocturne-kx decrypt`)\n";
+            return 0;
+#endif // NOCTURNE_CLI_TLS
         }
 
         if (cmd == "self-test") {

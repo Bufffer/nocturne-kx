@@ -100,9 +100,9 @@ else()
 endif()
 
 # OpenSSL (TLS transport adapter) - optional
-# When found, src/tcp_tls_transport.hpp can be used and the
-# tcp-tls-transport-test target is wired up. The main CLI does not yet
-# import the TLS transport, so OpenSSL is not linked into nocturne-kx.
+# When found, src/tcp_tls_transport.hpp can be used, the
+# tcp-tls-transport-test target is wired up, and the main CLI gains the
+# tls-send / tls-recv subcommands (so nocturne-kx links OpenSSL too).
 if(ENABLE_TLS_TRANSPORT)
     find_package(OpenSSL QUIET)
     if(OpenSSL_FOUND)
@@ -243,6 +243,11 @@ if(NOT BUILD_FUZZER)
     # CMAKE_DL_LIBS resolves to "dl" on Linux/Alpine and "" on Windows
     # (where kernel32 is auto-linked by MSVC).
     target_link_libraries(nocturne-kx ${CMAKE_DL_LIBS})
+
+    # tls-send / tls-recv subcommands use src/tcp_tls_transport.hpp.
+    if(ENABLE_TLS_TRANSPORT)
+        target_link_libraries(nocturne-kx OpenSSL::SSL OpenSSL::Crypto)
+    endif()
 
     if(ENABLE_PQC)
         target_link_libraries(nocturne-kx ${LIBOQS_LIBRARY})

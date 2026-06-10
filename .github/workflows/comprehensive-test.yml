@@ -477,6 +477,43 @@ jobs:
         "$BINARY" memory-stats || echo "Memory stats completed with code: $?"
         echo "✅ Memory stats completed"
 
+    - name: Test 16 - TLS Transport (tls-send / tls-recv)
+      run: |
+        cd build
+        BINARY=$(find . -name nocturne-kx -type f | head -1)
+        echo "========================================="
+        echo "TEST 16: TLS transport end-to-end"
+        echo "========================================="
+        mkdir -p tls-test && cd tls-test
+
+        # Self-signed Ed25519 server certificate
+        openssl req -x509 -newkey ed25519 -keyout key.pem -out cert.pem \
+          -days 1 -nodes -subj "/CN=localhost" \
+          -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+
+        # Hybrid PQC keys + an encrypted packet to carry over the wire
+        ../"$BINARY" gen-receiver keys --kem hybrid
+        echo "tls transport smoke payload" > plain.txt
+        ../"$BINARY" encrypt --kem hybrid --rx-pk keys/receiver_hybrid_pk.bin \
+          --in plain.txt --out packet.bin --aad "tls-e2e"
+
+        # Receiver in background, then send over TLS 1.3 with cert pinning
+        ../"$BINARY" tls-recv --port 19443 --cert cert.pem --key key.pem \
+          --out received.bin &
+        RECV_PID=$!
+        sleep 2
+        ../"$BINARY" tls-send --host 127.0.0.1 --port 19443 \
+          --ca cert.pem --sni localhost --in packet.bin
+        wait $RECV_PID
+
+        # The received packet must decrypt back to the original plaintext
+        cmp packet.bin received.bin
+        ../"$BINARY" decrypt --rx-pk keys/receiver_hybrid_pk.bin \
+          --rx-sk keys/receiver_hybrid_sk.bin \
+          --in received.bin --out roundtrip.txt
+        cmp plain.txt roundtrip.txt
+        echo "✅ TLS transport carried a hybrid PQC packet end-to-end"
+
     - name: Test Summary
       if: always()
       run: |
@@ -502,6 +539,7 @@ jobs:
         echo " 13. FileHSM: ✅"
         echo " 14. Security Check: ✅"
         echo " 15. Memory Stats: ✅"
+        echo " 16. TLS Transport E2E: ✅"
         echo ""
         echo "========================================="
         echo "All features verified! 🎉"
