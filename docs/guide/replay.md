@@ -23,34 +23,6 @@ without sharing a single monotonic count.
 
 ## The defence in action
 
-```mermaid
-sequenceDiagram
-    participant A as Alice (sender)
-    participant N as Network
-    participant B as Bob (receiver)
-    participant DB as ReplayDB
-
-    A->>N: packet#1 (counter=1)
-    N->>B: deliver
-    B->>DB: has_seen(alice, sess, 1)?
-    DB-->>B: no
-    B->>DB: record(alice, sess, 1)
-    B-->>A: ACK
-
-    Note over N: Mallory captures packet#1
-
-    N->>B: replay packet#1
-    B->>DB: has_seen(alice, sess, 1)?
-    DB-->>B: yes (last=1)
-    B-->>N: ReplayDetected, exit 2
-
-    A->>N: packet#2 (counter=2)
-    N->>B: deliver
-    B->>DB: has_seen(alice, sess, 2)?
-    DB-->>B: no
-    B->>DB: record(alice, sess, 2)
-    B-->>A: ACK
-```
 
 ## On-disk format
 

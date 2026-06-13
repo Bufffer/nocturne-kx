@@ -35,12 +35,6 @@ never reorder bytes inside a primitive).
 
 ## Authenticated boundaries
 
-```mermaid
-flowchart LR
-  A[ver · flags · rotation_id · eph_pk · nonce · counter] -->|AAD prefix| B[aad bytes]
-  B --> C[ct + 16 B Poly1305 tag]
-  D[everything before this byte] -->|signed| E[Ed25519 sig · pqc_sig]
-```
 
 - **AEAD authenticates:** the canonical-bytes header prefix, the
   `aad` field, and the ciphertext itself. Poly1305 tag is 16 B,

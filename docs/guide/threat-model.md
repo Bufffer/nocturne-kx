@@ -11,41 +11,6 @@ what it assumes is already solved, and where its assumptions fail.
 
 ## Adversary map
 
-```mermaid
-mindmap
-  root((Nocturne-KX<br/>adversary<br/>surface))
-    Quantum
-      Harvest-now decrypt-later
-        ML-KEM-1024 defence
-      CRQC in 2032+
-        Hybrid combiner buys time
-    Network
-      Replay
-        ReplayDB counter
-      Tampering
-        AEAD tag + signature
-      MITM TLS
-        TLS 1.3 + pinned CA
-    Signer
-      Wrong-key impersonation
-        expect-signer pin
-      Stale rotation
-        rotation_id floor
-    Side-channel
-      Timing
-        random delay 100-500 us
-      Cache
-        clflush + memory_barrier
-      Branch
-        branchless ct_select
-    Operational
-      HSM PIN leak
-        Zeroed after C_Login
-      Audit-log tampering
-        BLAKE2b chain + Ed25519
-      Insider commit
-        Code review only
-```
 
 Each leaf is a specific mitigation in code. Branches Nocturne-KX does
 not defend ("network metadata", "endpoint compromise") are absent on

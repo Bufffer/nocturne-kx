@@ -46,40 +46,19 @@ touches global state.
 
 ## Packet flow, hybrid PQC mode
 
-```mermaid
-sequenceDiagram
-  participant U as user
-  participant S as sender CLI
-  participant K as KEMFactory
-  participant A as aead.hpp
-  participant SIG as SignatureFactory
-  participant N as network / file
+Sender side:
 
-  U->>S: nocturne-kx encrypt --kem hybrid
-  S->>K: encapsulate(receiver_pk)
-  K-->>S: (kem_ct 1600 B, shared_secret 32 B)
-  S->>S: combine_secrets(NOCTURNE_PROTOCOL_VERSION=4)
-  S->>A: encrypt(plaintext, aad, key)
-  A-->>S: ciphertext + 16 B tag
-  S->>SIG: sign(canonical_bytes, sk)
-  SIG-->>S: signature bytes
-  S->>N: serialise(packet), v3 wire format
-
-  Note over S,N: All steps return Result<T>;<br/>any failure is a typed Error<br/>(no exceptions on the hot path)
-```
+1. `KEMFactory::create(HYBRID_X25519_MLKEM1024)` → `encapsulate(receiver_pk)` returns 1600 B ciphertext + 32 B shared secret.
+2. `combine_secrets(NOCTURNE_PROTOCOL_VERSION=4)` runs the SP 800-56C R2 KDF over `x25519_ss || mlkem_ss`.
+3. The combined secret keys `aead.hpp`'s XChaCha20-Poly1305 over plaintext + AAD; output carries a 16 B Poly1305 tag.
+4. `SignatureFactory` signs the canonical-bytes head; the resulting signature lives in the packet's trailing block.
+5. `packet.cpp::serialize` writes the v3 wire format. Every step returns `Result<T>`; the first typed error short-circuits the chain.
 
 The receiver runs the dual in reverse: `deserialize` first, then `peek`
 at the flags byte to pick the KEM mode, then `decapsulate` + `decrypt` +
 `verify`, each step short-circuiting on the first typed error.
 
 ## Replay database
-
-```mermaid
-flowchart LR
-  P[Plaintext counter<br/>per receiver, session] -->|HKDF| K[XChaCha20-Poly1305 key]
-  K -->|encrypt + MAC| F[(replay.db<br/>on-disk file)]
-  F -->|fsync + rename| D[Atomic write]
-```
 
 On-disk format: `[8B version|MSB=encryption-flag][24B nonce][4B ct_len][AEAD ct]`,
 with the plaintext version as AAD so an attacker can't downgrade an

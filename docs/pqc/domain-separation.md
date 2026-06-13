@@ -16,31 +16,6 @@ designed to prevent. The sender bound to one version, the receiver
 bound to another, and the AEAD silently failed at decryption time
 without the receiver ever knowing why.
 
-```mermaid
-stateDiagram-v2
-    direction LR
-    [*] --> SenderEncap
-    SenderEncap: Sender encapsulate
-    SenderEncap --> SenderKDF
-    SenderKDF: KDF(label = ".../v4/combine")
-    SenderKDF --> SenderKey: key_A
-    SenderKey: AEAD key A
-
-    [*] --> RxDecap
-    RxDecap: Receiver decapsulate
-    RxDecap --> RxKDF
-    RxKDF: KDF(label = ".../v3/combine") (BUG)
-    RxKDF --> RxKey: key_B
-    RxKey: AEAD key B
-
-    SenderKey --> Verdict
-    RxKey --> Verdict
-    Verdict: AeadAuthFailed (silent)
-
-    Verdict --> Fix
-    Fix: Bind both sides to NOCTURNE_PROTOCOL_VERSION (commit 9b5c00b)
-    Fix --> [*]
-```
 
 After the fix, both sides bind to `NOCTURNE_PROTOCOL_VERSION` (currently
 4), distinct from the packet `ver` byte (currently 3). See

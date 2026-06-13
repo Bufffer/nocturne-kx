@@ -9,24 +9,6 @@ This walks you from `git clone` to a working hybrid post-quantum encrypt /
 decrypt roundtrip. Tested on Ubuntu 24.04, macOS 14, and GitHub Codespaces.
 Windows builds via WSL2 follow the same recipe.
 
-```mermaid
-journey
-    title Your first hybrid PQC roundtrip
-    section Setup
-      Install deps        : 5: You
-      Clone + build       : 4: You
-      Run self-test       : 5: CLI
-    section Keys
-      gen-receiver hybrid : 5: CLI
-      gen-signer hybrid   : 5: CLI
-    section Roundtrip
-      encrypt             : 5: CLI
-      decrypt             : 5: CLI
-      cmp plaintext       : 5: You
-    section Prove defences
-      Replay rejected     : 5: CLI
-      Bad signer rejected : 5: CLI
-```
 
 ::: tip Time budget
 Five minutes if libsodium is already installed; ten if you need

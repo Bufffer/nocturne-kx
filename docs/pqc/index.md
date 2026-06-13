@@ -17,22 +17,6 @@ both halves to compromise a packet.
 
 ## Algorithm picker
 
-```mermaid
-flowchart LR
-    Q{What's your<br/>threat model?}
-    Q -->|Pre-quantum<br/>compatibility| C[Classical<br/>X25519 + Ed25519]
-    Q -->|Defence in depth<br/>recommended| H[Hybrid<br/>X25519 + ML-KEM-1024<br/>Ed25519 + ML-DSA-87]
-    Q -->|Pure post-quantum<br/>archive-immune| P[Pure<br/>ML-KEM-1024 + ML-DSA-87]
-
-    C --> CS[32 B ciphertext<br/>64 B signature]
-    H --> HS[1600 B ciphertext<br/>4691 B signature]
-    P --> PS[1568 B ciphertext<br/>4627 B signature]
-
-    HS -.->|recommended<br/>default| Default([Hybrid<br/>is default])
-
-    style Default fill:#1a1230,stroke:#a855f7,color:#c084fc,stroke-width:2px
-    style H fill:#161826,stroke:#22d3ee,stroke-width:2.5px
-```
 
 ## Available algorithms
 

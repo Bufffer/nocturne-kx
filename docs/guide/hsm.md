@@ -95,38 +95,6 @@ export PKCS11_LIB=/opt/cloudhsm/lib/libcloudhsm_pkcs11.so
 
 What the CLI actually does on the wire when you set `--sign-hsm-uri "hsm://..."`:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant CLI as nocturne-kx encrypt
-    participant ADP as Inline PKCS11HSM adapter
-    participant IMP as nocturne::hsm::PKCS11HSM
-    participant LIB as libsofthsm2.so
-    participant DEV as Token (SoftHSM2)
-
-    CLI->>ADP: sign(packet_bytes)
-    ADP->>IMP: forward via env vars
-    IMP->>LIB: C_GetFunctionList
-    LIB-->>IMP: CK_FUNCTION_LIST*
-    IMP->>LIB: C_Initialize
-    IMP->>LIB: C_GetSlotList(token=nocturne)
-    LIB-->>IMP: slot_id
-    IMP->>LIB: C_OpenSession(slot_id, RW)
-    LIB-->>IMP: session_handle
-    IMP->>LIB: C_Login(USER, PIN)
-    Note over IMP,LIB: PIN zeroed immediately
-    IMP->>LIB: C_FindObjectsInit(label)
-    IMP->>LIB: C_FindObjects, C_FindObjectsFinal
-    LIB-->>IMP: priv_key_handle
-    IMP->>LIB: C_SignInit(CKM_EDDSA, priv_handle)
-    IMP->>LIB: C_Sign(packet_bytes)
-    LIB->>DEV: hardware sign
-    DEV-->>LIB: 64 B Ed25519 signature
-    LIB-->>IMP: signature
-    IMP-->>ADP: signature
-    ADP-->>CLI: signature
-    CLI->>CLI: assemble + serialise packet
-```
 
 The full v2.40 `CK_FUNCTION_LIST` layout makes every one of these
 calls land at the correct offset (P7.1 fix).
