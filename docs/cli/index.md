@@ -41,13 +41,13 @@ in a prescan before subcommand dispatch.
 
 | Flag                       | Effect                                                  |
 |----------------------------|---------------------------------------------------------|
-| `--rate-limit-store <path>`| Override the rate-limit DB path (default: `~/.nocturne/rl.db`). |
-| `--audit-log <path>`       | Append every CLI action to this JSONL audit log.        |
-| `--audit-sign-key <path>`  | Ed25519 SK file used to sign each audit record.         |
-| `--audit-anchor <path>`    | External anchor blob (e.g. TSA token) per record.       |
-| `--audit-worm-dir <dir>`   | Mirror each record to `<dir>/<seq>.json` (WORM).        |
-| `--tpm-counter <path>`     | Bind the replay DB counter to a TPM-backed counter.     |
-| `--hsm-pass <string>`      | Passphrase for `NCHSM2`-encrypted FileHSM secret keys.  |
+| `--rate-limit-store &lt;path&gt;`| Override the rate-limit DB path (default: `~/.nocturne/rl.db`). |
+| `--audit-log &lt;path&gt;`       | Append every CLI action to this JSONL audit log.        |
+| `--audit-sign-key &lt;path&gt;`  | Ed25519 SK file used to sign each audit record.         |
+| `--audit-anchor &lt;path&gt;`    | External anchor blob (e.g. TSA token) per record.       |
+| `--audit-worm-dir &lt;dir&gt;`   | Mirror each record to `&lt;dir&gt;/&lt;seq&gt;.json` (WORM).        |
+| `--tpm-counter &lt;path&gt;`     | Bind the replay DB counter to a TPM-backed counter.     |
+| `--hsm-pass &lt;string&gt;`      | Passphrase for `NCHSM2`-encrypted FileHSM secret keys.  |
 
 The prescan also routes `--audit-worm-dir` into its own option slot
 (P6.6 bug fix); prior versions silently aliased it onto `--audit-anchor`.

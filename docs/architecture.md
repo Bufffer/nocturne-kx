@@ -61,7 +61,7 @@ flowchart TB
 
 The only "magic" sits in `src/protocol/messaging.cpp`, which composes the
 sub-systems. Everything else is a leaf: `KEMInterface::encapsulate` does
-exactly what its name says, returns `Result<T>` on failure, and never
+exactly what its name says, returns `Result&lt;T&gt;` on failure, and never
 touches global state.
 
 ## Module map
@@ -69,11 +69,11 @@ touches global state.
 | Path                                 | Role                                                                              |
 |--------------------------------------|-----------------------------------------------------------------------------------|
 | `nocturne-kx.cpp`                    | CLI dispatch; inline `FileHSM` + `PKCS11HSM` adapters; `encrypt`/`decrypt` flow.   |
-| `src/core/result.hpp` · `error.hpp`  | `Result<T>` + typed `ErrorCode` — wire/SIEM contract; numbers are stable.          |
+| `src/core/result.hpp` · `error.hpp`  | `Result&lt;T&gt;` + typed `ErrorCode` — wire/SIEM contract; numbers are stable.          |
 | `src/core/byte_span.hpp`             | `BytesView` / `MutableBytesView` (ptr+size collapsed via P6.3).                   |
 | `src/protocol/packet.{hpp,cpp}`      | v3 wire format. Compile-time sanity checks via `static_assert`.                   |
 | `src/protocol/messaging.{hpp,cpp}`   | `encrypt_packet`, `decrypt_packet`, `*_kem` siblings. Single point of policy.     |
-| `src/protocol/{kdf,aead,signing}.hpp`| Tight wrappers over libsodium primitives. All return `Result<T>`.                  |
+| `src/protocol/{kdf,aead,signing}.hpp`| Tight wrappers over libsodium primitives. All return `Result&lt;T&gt;`.                  |
 | `src/pqc/kem/`                       | `KEMInterface` + `KEMFactory` + `HybridKEM` + ML-KEM-1024 wrapper.                  |
 | `src/pqc/sig/`                       | `SignatureScheme` + `SignatureFactory` + `HybridSig` + ML-DSA-87 wrapper.          |
 | `src/hsm/hsm_interface.hpp`          | Enterprise `nocturne::hsm::HSMInterface`: rotation, audit, policy.                |

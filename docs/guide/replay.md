@@ -35,7 +35,7 @@ without sharing a single monotonic count.
   AAD pinning means a v1 ciphertext can't be replayed against a v2
   reader.
 
-Atomicity: writes go to `<path>.tmp`, then `rename(2)` over the live
+Atomicity: writes go to `&lt;path&gt;.tmp`, then `rename(2)` over the live
 file. Crash-during-write leaves the previous DB intact.
 
 ## API surface

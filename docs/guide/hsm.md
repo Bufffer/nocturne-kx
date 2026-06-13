@@ -11,7 +11,7 @@ HSM mode. The CLI selects an HSM via a URI scheme:
 | URI                          | Backend                | Use case             |
 |------------------------------|------------------------|----------------------|
 | `file:///path/to/sk.bin`     | `FileHSM`              | Dev / fixture-only   |
-| `hsm://<token_id>:<key_label>` | `PKCS11HSM` adapter   | Production HSM       |
+| `hsm://&lt;token_id&gt;:&lt;key_label&gt;` | `PKCS11HSM` adapter   | Production HSM       |
 
 `FileHSM` accepts both raw 64 B Ed25519 secret keys and the encrypted
 `NCHSM2` format (Argon2id-derived AEAD + passphrase via

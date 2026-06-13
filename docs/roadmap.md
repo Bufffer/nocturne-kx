@@ -51,7 +51,7 @@ in `memory/roadmap.md`; this page summarises what's reached `main`.
 
 Wire format, KDF, AEAD, signing, KEM, HSM, audit, replay all
 extracted to `src/protocol/`, `src/pqc/`, `src/hsm/`,
-`src/security/` modules. `Result<T>` / `BytesView` foundations
+`src/security/` modules. `Result&lt;T&gt;` / `BytesView` foundations
 introduced.
 
 ### P6 — Code-quality series (June 2026)

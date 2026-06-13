@@ -19,7 +19,7 @@ nocturne-kx gen-signer <outdir> [--sig-type ed25519|hybrid|mldsa]
 
 | Argument     | Default   | Description |
 |--------------|-----------|-------------|
-| `<outdir>`   | required  | Directory the key files are written to. Created if missing. |
+| `&lt;outdir&gt;`   | required  | Directory the key files are written to. Created if missing. |
 | `--sig-type` | `ed25519` | Signature algorithm. See [Signature modes](../pqc/signatures). |
 
 ## Output files
@@ -55,4 +55,4 @@ HSM hardware ships ML-DSA-87 at scale yet.
 | Code | Meaning |
 |------|---------|
 | 0    | Both files written.                                   |
-| 1    | Bad `--sig-type` value, missing `<outdir>`, or filesystem error. |
+| 1    | Bad `--sig-type` value, missing `&lt;outdir&gt;`, or filesystem error. |

@@ -19,7 +19,7 @@ nocturne-kx gen-receiver <outdir> [--kem x25519|hybrid|mlkem]
 
 | Argument | Default  | Description |
 |----------|----------|-------------|
-| `<outdir>` | required | Directory the key files are written to. Created if missing. |
+| `&lt;outdir&gt;` | required | Directory the key files are written to. Created if missing. |
 | `--kem`    | `x25519` | KEM algorithm. See [KEM modes](../pqc/kem). |
 
 ## Output files
@@ -62,4 +62,4 @@ nocturne-kx gen-receiver ./keys --kem mlkem
 | Code | Meaning |
 |------|---------|
 | 0    | Both files written.                                   |
-| 1    | Bad `--kem` value, missing `<outdir>`, or filesystem error. |
+| 1    | Bad `--kem` value, missing `&lt;outdir&gt;`, or filesystem error. |

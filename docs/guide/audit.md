@@ -47,7 +47,7 @@ The first record's `prev_hash` is 32 zero bytes — the chain "head".
   ...
 ```
 
-`--audit-worm-dir` writes each record as `<seq>.json` so a
+`--audit-worm-dir` writes each record as `&lt;seq&gt;.json` so a
 write-once filesystem (e.g. AWS S3 Object Lock, GCS Bucket Lock,
 NetApp SnapLock) can refuse modifications at the storage layer.
 

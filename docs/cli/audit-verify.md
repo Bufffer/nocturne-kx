@@ -18,7 +18,7 @@ nocturne-kx audit-verify <log-path> [--expect-signer <pk-file>]
 
 | Argument            | Description |
 |---------------------|-------------|
-| `<log-path>`        | JSONL file written by `--audit-log`. |
+| `&lt;log-path&gt;`        | JSONL file written by `--audit-log`. |
 | `--expect-signer`   | Optional Ed25519 PK to pin. With this, every record's `sig` field must verify against this key; mismatches are reported per-record. |
 
 ## Examples
