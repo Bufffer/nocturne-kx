@@ -1,6 +1,6 @@
 ---
 title: Wire format
-description: Every byte of the Nocturne-KX v3 packet: in order, with width and meaning.
+description: Every byte of the Nocturne-KX v3 packet, in order, with width and meaning.
 ---
 
 # Wire format <span class="nx-badge nx-badge--violet">v3</span>

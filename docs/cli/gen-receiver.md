@@ -1,6 +1,6 @@
 ---
 title: gen-receiver
-description: Generate a Nocturne-KX receiver KEM keypair (X25519: hybrid, or pure ML-KEM-1024).
+description: Generate a Nocturne-KX receiver KEM keypair (X25519, hybrid, or pure ML-KEM-1024).
 ---
 
 # `gen-receiver`

@@ -1,6 +1,6 @@
 ---
 title: Signature modes
-description: Ed25519: hybrid Ed25519+ML-DSA-87, pure ML-DSA-87, what each binds to and where to use it.
+description: Ed25519, hybrid Ed25519+ML-DSA-87, pure ML-DSA-87, what each binds to and where to use it.
 ---
 
 # Signature modes

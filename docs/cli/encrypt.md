@@ -1,6 +1,6 @@
 ---
 title: encrypt
-description: Encrypt a file into a Nocturne-KX packet: classical, hybrid, or pure PQC. Optional classical and/or PQ signatures.
+description: Encrypt a file into a Nocturne-KX packet, classical, hybrid, or pure PQC. Optional classical and/or PQ signatures.
 ---
 
 # `encrypt`

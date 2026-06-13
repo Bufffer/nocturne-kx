@@ -1,6 +1,6 @@
 ---
 title: gen-signer
-description: Generate a Nocturne-KX signer keypair (Ed25519: hybrid Ed25519+ML-DSA-87, or pure ML-DSA-87).
+description: Generate a Nocturne-KX signer keypair (Ed25519, hybrid Ed25519+ML-DSA-87, or pure ML-DSA-87).
 ---
 
 # `gen-signer`

@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: How Nocturne-KX is organised: module map, packet flow, HSM hierarchy, replay database, and the strict libsodium boundary.
+description: "How Nocturne-KX is organised: module map, packet flow, HSM hierarchy, replay database, and the strict libsodium boundary."
 ---
 
 # Architecture

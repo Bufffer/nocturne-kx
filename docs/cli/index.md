@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: Every Nocturne-KX subcommand: flag, and exit code. Stable across the 4.x line.
+description: Every Nocturne-KX subcommand, flag, and exit code. Stable across the 4.x line.
 ---
 
 # CLI reference

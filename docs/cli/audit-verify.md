@@ -1,6 +1,6 @@
 ---
 title: audit-verify
-description: Walk a JSONL audit log: recompute the BLAKE2b hash chain, verify Ed25519 per-record signatures.
+description: Walk a JSONL audit log; recompute the BLAKE2b hash chain, verify Ed25519 per-record signatures.
 ---
 
 # `audit-verify`

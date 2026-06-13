@@ -1,6 +1,6 @@
 ---
 title: KEM modes
-description: X25519: hybrid X25519+ML-KEM-1024, pure ML-KEM-1024, wire IDs, sizes, and how to pick.
+description: X25519, hybrid X25519+ML-KEM-1024, pure ML-KEM-1024, wire IDs, sizes, and how to pick.
 ---
 
 # KEM modes
