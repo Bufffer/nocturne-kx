@@ -122,7 +122,7 @@ examine it indirectly:
 ./build/nocturne-kx self-test
 
 # A failed decrypt with ReplayDetected means the DB counter is ahead of
-# the packet counter -- the packet has already been processed
+# the packet counter (the packet has already been processed)
 ./build/nocturne-kx decrypt ... 2>&1 | grep -c ReplayDetected
 ```
 

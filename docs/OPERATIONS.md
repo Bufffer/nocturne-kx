@@ -13,14 +13,14 @@ A typical production layout looks like:
 
 ```
 /etc/nocturne/
-  receiver_hybrid_pk.bin      # public -- world-readable is fine
-  receiver_hybrid_sk.nchsm2   # secret -- 0600, owner: nocturne service account
-  auditor_pk.bin              # public -- verify audit log
-  auditor_sk.nchsm2           # secret -- 0600, offline or in HSM
+  receiver_hybrid_pk.bin      # public (world-readable is fine)
+  receiver_hybrid_sk.nchsm2   # secret (0600, owner: nocturne service account)
+  auditor_pk.bin              # public (verify audit log)
+  auditor_sk.nchsm2           # secret (0600, offline or in HSM)
 
 /var/lib/nocturne/
   replay.db                   # AEAD-encrypted, atomic writes
-  replay.db.macsk             # MAC key for replay DB -- 0600
+  replay.db.macsk             # MAC key for replay DB (0600)
 
 /var/log/nocturne/
   audit.log                   # JSONL, append-only
@@ -151,7 +151,7 @@ Nocturne-KX writes no metrics endpoint. Wire it up through exit codes and the au
 ./nocturne-kx self-test || alert "nocturne self-test failed"
 
 # Audit log SIEM forwarding (syslog UDP/TCP/TLS are wired sinks)
-# -- configure via SIEMConnector in src/security/siem_connector.hpp
+# configure via SIEMConnector in src/security/siem_connector.hpp
 ```
 
 ## Incident response

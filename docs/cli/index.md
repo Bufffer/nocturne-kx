@@ -82,11 +82,11 @@ These are the typed `ErrorCode` values from `src/core/error.hpp`. The integer va
 |------|------|---------|
 | 1 | `Unknown` | Unclassified error. |
 | 2 | `AeadEncryptFailed` | XChaCha20-Poly1305 encryption failed (libsodium returned non-zero). |
-| 3 | `AeadAuthFailed` | Poly1305 tag mismatch on decrypt -- tampered ciphertext or wrong key. |
+| 3 | `AeadAuthFailed` | Poly1305 tag mismatch on decrypt: tampered ciphertext or wrong key. |
 | 4 | `KemEncapFailed` | KEM encapsulation failed. |
-| 5 | `KemDecapFailed` | KEM decapsulation failed -- wrong secret key or corrupted ciphertext. |
+| 5 | `KemDecapFailed` | KEM decapsulation failed: wrong secret key or corrupted ciphertext. |
 | 6 | `SignFailed` | Signing operation failed. |
-| 7 | `SignatureVerifyFailed` | Signature verification failed -- wrong signer key or tampered packet head. |
+| 7 | `SignatureVerifyFailed` | Signature verification failed: wrong signer key or tampered packet head. |
 | 8 | `ReplayDetected` | Replay database rejected the packet counter. |
 | 9 | `PacketFieldOversized` | A wire field exceeded its maximum size cap. |
 | 10 | `PacketVersionMismatch` | Packet `ver` byte does not match supported version. |
