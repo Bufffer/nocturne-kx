@@ -56,7 +56,7 @@ introduced.
 
 ### P6 — Code-quality series (June 2026)
 
-- **P6.1a/b** Result<T> migration across protocol + messaging.
+- **P6.1a/b** `Result&lt;T&gt;` migration across protocol + messaging.
 - **P6.2** `inline constexpr` instead of macros.
 - **P6.3** `BytesView` everywhere ptr+size used to live.
 - **P6.4** Compile-time wire invariants (`static_assert`).
