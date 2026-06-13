@@ -268,42 +268,80 @@
 
 /* Cluster (subgraph) tinting */
 .nx-mermaid svg .cluster rect {
-  fill: rgba(168, 85, 247, 0.06) !important;
-  stroke: rgba(168, 85, 247, 0.35) !important;
+  fill: var(--nx-mm-cluster-fill) !important;
+  stroke: var(--nx-mm-cluster-stroke) !important;
   stroke-width: 1.2px !important;
   rx: 12px;
   ry: 12px;
 }
 .nx-mermaid svg .cluster .nodeLabel,
-.nx-mermaid svg .cluster .cluster-label foreignObject {
-  color: #c084fc !important;
+.nx-mermaid svg .cluster .cluster-label foreignObject,
+.nx-mermaid svg .cluster .cluster-label foreignObject * {
+  color: var(--nx-mm-cluster-label) !important;
+  fill: var(--nx-mm-cluster-label) !important;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
-/* Node fill, our brand background */
+/* Node fill, theme-adaptive via CSS vars */
+:root:not(.dark) {
+  --nx-mm-node-fill:   #ffffff;
+  --nx-mm-node-stroke: rgba(8, 145, 178, 0.55);
+  --nx-mm-node-text:   #0f172a;
+  --nx-mm-cluster-fill: rgba(168, 85, 247, 0.06);
+  --nx-mm-cluster-stroke: rgba(126, 34, 206, 0.32);
+  --nx-mm-cluster-label: #6b21a8;
+  --nx-mm-edge: #0e7490;
+  --nx-mm-edge-label-bg: #ffffff;
+  --nx-mm-edge-label-color: #0e7490;
+  --nx-mm-actor-fill: #ffffff;
+  --nx-mm-actor-stroke: rgba(8, 145, 178, 0.55);
+  --nx-mm-actor-text: #0f172a;
+  --nx-mm-note-fill: rgba(168, 85, 247, 0.08);
+  --nx-mm-note-stroke: rgba(126, 34, 206, 0.32);
+  --nx-mm-note-text: #0f172a;
+}
+.dark {
+  --nx-mm-node-fill:   #161826;
+  --nx-mm-node-stroke: rgba(34, 211, 238, 0.55);
+  --nx-mm-node-text:   #e2e8f0;
+  --nx-mm-cluster-fill: rgba(168, 85, 247, 0.08);
+  --nx-mm-cluster-stroke: rgba(168, 85, 247, 0.35);
+  --nx-mm-cluster-label: #c084fc;
+  --nx-mm-edge: #67e8f9;
+  --nx-mm-edge-label-bg: rgba(10, 10, 15, 0.85);
+  --nx-mm-edge-label-color: #67e8f9;
+  --nx-mm-actor-fill: #161826;
+  --nx-mm-actor-stroke: rgba(34, 211, 238, 0.55);
+  --nx-mm-actor-text: #e2e8f0;
+  --nx-mm-note-fill: rgba(168, 85, 247, 0.12);
+  --nx-mm-note-stroke: rgba(168, 85, 247, 0.45);
+  --nx-mm-note-text: #f1f5f9;
+}
+
 .nx-mermaid svg .node rect,
 .nx-mermaid svg .node circle,
 .nx-mermaid svg .node ellipse,
 .nx-mermaid svg .node polygon,
 .nx-mermaid svg .node path {
-  fill: #161826 !important;
-  stroke: #22d3ee !important;
+  fill: var(--nx-mm-node-fill) !important;
+  stroke: var(--nx-mm-node-stroke) !important;
   stroke-width: 1.6px !important;
 }
 
 .nx-mermaid svg .node .label,
 .nx-mermaid svg .node .nodeLabel,
-.nx-mermaid svg .node foreignObject {
-  color: #e2e8f0 !important;
+.nx-mermaid svg .node foreignObject,
+.nx-mermaid svg .node foreignObject * {
+  color: var(--nx-mm-node-text) !important;
+  fill: var(--nx-mm-node-text) !important;
 }
 
 /* Edge path draw animation: stroke-dasharray trick. We assign a large
    dasharray and animate the dashoffset from full-length to zero. */
 .nx-mermaid svg .edgePath path,
 .nx-mermaid svg .flowchart-link {
-  stroke: url(#nx-edge-gradient) !important;
-  stroke: #67e8f9 !important; /* fallback when gradient ref isn't injected */
+  stroke: var(--nx-mm-edge) !important;
   stroke-width: 1.8px !important;
   fill: none !important;
   stroke-dasharray: 1000;
@@ -314,8 +352,8 @@
 .nx-mermaid svg .edgePath marker path,
 .nx-mermaid svg .edgePath marker polygon,
 .nx-mermaid svg defs marker path {
-  fill: #67e8f9 !important;
-  stroke: #67e8f9 !important;
+  fill: var(--nx-mm-edge) !important;
+  stroke: var(--nx-mm-edge) !important;
   stroke-dasharray: 0 !important;
   stroke-dashoffset: 0 !important;
   animation: none !important;
@@ -323,8 +361,8 @@
 
 /* Edge labels: subtle pulse to draw attention */
 .nx-mermaid svg .edgeLabel {
-  background: rgba(10, 10, 15, 0.85) !important;
-  color: #67e8f9 !important;
+  background: var(--nx-mm-edge-label-bg) !important;
+  color: var(--nx-mm-edge-label-color) !important;
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 0.78rem !important;
@@ -334,41 +372,46 @@
   overflow: visible;
 }
 .nx-mermaid svg .edgeLabel rect {
-  fill: rgba(10, 10, 15, 0.85) !important;
+  fill: var(--nx-mm-edge-label-bg) !important;
 }
 
 /* Sequence diagram specific styling */
 .nx-mermaid svg .actor {
-  fill: #161826 !important;
-  stroke: #22d3ee !important;
+  fill: var(--nx-mm-actor-fill) !important;
+  stroke: var(--nx-mm-actor-stroke) !important;
+}
+.nx-mermaid svg text.actor {
+  fill: var(--nx-mm-actor-text) !important;
 }
 .nx-mermaid svg .actor-line {
-  stroke: rgba(103, 232, 249, 0.35) !important;
+  stroke: var(--nx-mm-actor-stroke) !important;
+  opacity: 0.45;
 }
 .nx-mermaid svg .messageLine0,
 .nx-mermaid svg .messageLine1 {
-  stroke: #67e8f9 !important;
+  stroke: var(--nx-mm-edge) !important;
   stroke-dasharray: 600;
   stroke-dashoffset: 600;
   animation: nx-edge-draw 1.1s ease-out 0.3s forwards;
 }
 .nx-mermaid svg .messageText {
-  fill: #cbd5e1 !important;
+  fill: var(--nx-mm-actor-text) !important;
   font-family: 'JetBrains Mono', monospace !important;
   font-size: 12px !important;
 }
 .nx-mermaid svg .activation0,
 .nx-mermaid svg .activation1,
 .nx-mermaid svg .activation2 {
-  fill: rgba(34, 211, 238, 0.18) !important;
-  stroke: #22d3ee !important;
+  fill: var(--vp-c-brand-soft) !important;
+  stroke: var(--nx-mm-edge) !important;
 }
 .nx-mermaid svg .note {
-  fill: rgba(168, 85, 247, 0.12) !important;
-  stroke: #a855f7 !important;
+  fill: var(--nx-mm-note-fill) !important;
+  stroke: var(--nx-mm-note-stroke) !important;
 }
-.nx-mermaid svg .noteText {
-  fill: #f1f5f9 !important;
+.nx-mermaid svg .noteText,
+.nx-mermaid svg .noteText * {
+  fill: var(--nx-mm-note-text) !important;
 }
 
 /* Timeline diagram */

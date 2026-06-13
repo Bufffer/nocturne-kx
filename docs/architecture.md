@@ -11,53 +11,9 @@ cryptographic operation lives behind a typed interface (`KEMInterface`,
 `SignatureScheme`, `HSMInterface`) so the wire format, the audit log,
 and the policy layer can be exercised independently.
 
-## Layered view
+## System overview
 
-```mermaid
-flowchart TB
-  subgraph CLI["CLI, nocturne-kx.cpp"]
-    A1[gen-receiver / gen-signer]
-    A2[encrypt / decrypt]
-    A3[tls-send / tls-recv]
-    A4[audit-verify / self-test]
-  end
-
-  subgraph Protocol["Protocol, src/protocol/"]
-    B1[messaging.cpp<br/>encrypt_packet · decrypt_packet]
-    B2[packet.cpp<br/>serialize · deserialize]
-    B3[kdf.hpp · aead.hpp · signing.hpp]
-  end
-
-  subgraph PQC["PQC, src/pqc/"]
-    C1[KEMFactory<br/>X25519 / HybridKEM / ML-KEM-1024]
-    C2[SignatureFactory<br/>Ed25519 / HybridSig / ML-DSA-87]
-  end
-
-  subgraph Security["Security, src/security/"]
-    D1[ReplayDB<br/>MAC-protected, atomic]
-    D2[AuditLogger<br/>BLAKE2b chain + Ed25519]
-    D3[RateLimiter]
-    D4[KeyRotationManager]
-  end
-
-  subgraph HSM["HSM, src/hsm/"]
-    E1[FileHSM, dev only]
-    E2[PKCS11HSM, production]
-  end
-
-  subgraph Sodium["libsodium + liboqs"]
-    F1[X25519 · XChaCha20-Poly1305 · Ed25519 · BLAKE2b · Argon2id]
-    F2[ML-KEM-1024 · ML-DSA-87]
-  end
-
-  CLI --> Protocol
-  Protocol --> PQC
-  Protocol --> Security
-  Protocol --> HSM
-  PQC --> Sodium
-  Security --> Sodium
-  HSM --> Sodium
-```
+<NocturneArchFlow />
 
 The only "magic" sits in `src/protocol/messaging.cpp`, which composes the
 sub-systems. Everything else is a leaf: `KEMInterface::encapsulate` does

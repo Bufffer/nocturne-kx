@@ -65,22 +65,7 @@ The race between cryptographically-relevant quantum computers and post-quantum
 standards is narrower than most stacks assume. Nocturne-KX targets the
 midpoint.
 
-```mermaid
-timeline
-    title Post-quantum standards vs. quantum capability
-    section Standards
-      2024 : NIST FIPS 203 (ML-KEM) ratified
-           : NIST FIPS 204 (ML-DSA) ratified
-      2025 : Nocturne-KX v4 ships hybrid KEM
-           : Patent application filed
-      2026 : Hybrid signature path lands
-           : PKCS#11 v2.40 validated against SoftHSM
-    section Quantum threat
-      2026 : Today, no CRQC exists
-      2030 : "Harvest now, decrypt later" window begins to close
-      2032 : Plausible cryptographically-relevant quantum computer
-      2035 : Classical-only stacks retroactively decryptable
-```
+<NocturneTimeline />
 
 </section>
 
