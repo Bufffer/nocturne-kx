@@ -21,7 +21,7 @@ First tagged release. The codebase is feature-complete for the hybrid PQC use ca
 - `KEMInterface` / `KEMFactory` / `SignatureScheme` / `SignatureFactory` — polymorphic PQC interfaces. All methods `[[nodiscard]]`, all return `Result<T>`.
 - `FLAG_HAS_PQC_KEM` (0x04) and `FLAG_HAS_PQC_SIG` (0x08) wire flags. Receiver auto-detects mode from the flags byte.
 
-**Replay protection (patent pending)**
+**Replay protection**
 - `ReplayDB`: per-session monotonic counter database. On-disk format: `[8B version|MSB=encryption-flag][24B nonce][4B ct_len][AEAD ct]`. AAD = plaintext version prevents downgrade. Writes go to `.tmp` then `rename(2)` for atomicity.
 - Bidirectional counter separation: sender→receiver and receiver→sender counters are independent key-spaces inside the same DB file. An attacker cannot exhaust one side by replaying the other.
 - Optional TPM-backed monotonic counter binding for rollback-resistant deployments.

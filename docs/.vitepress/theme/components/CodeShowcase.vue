@@ -88,7 +88,7 @@ chain head: 7f3a...c4d2
         <header class="nx-pane__head">
           <span class="nx-pane__dot nx-pane__dot--err" /> attacker@mallory
         </header>
-<pre class="nx-pane__code"><code><span class="hl-comment"># Replay an already-delivered packet (P1 patent-pending defence)</span>
+<pre class="nx-pane__code"><code><span class="hl-comment"># Replay an already-delivered packet (bidirectional replay defence)</span>
 $ nocturne-kx decrypt \
     --rx-pk ./keys/receiver_hybrid_pk.bin \
     --rx-sk ./keys/receiver_hybrid_sk.bin \

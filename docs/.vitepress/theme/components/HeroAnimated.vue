@@ -133,7 +133,6 @@ onUnmounted(() => {
 
     <div class="nx-hero__content">
       <div class="nx-hero__badges">
-        <span class="nx-badge">Patent pending</span>
         <span class="nx-badge nx-badge--violet">ML-KEM-1024</span>
         <span class="nx-badge nx-badge--violet">ML-DSA-87</span>
         <span class="nx-badge">C++23</span>

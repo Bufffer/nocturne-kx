@@ -97,8 +97,7 @@ Two end-to-end demos run on the maintainer's GitHub Codespace:
   (X25519, hybrid, hybrid + Ed25519 sig); three attacks rejected
   (wrong signer, wrong key type, tampered ciphertext).
 - **`test2.sh`**, "Mallory's Replay Attack": `ReplayDB` rejects a
-  re-sent packet; patent-pending bidirectional replay protection
-  works in practice.
+  re-sent packet; bidirectional replay protection works in practice.
 
 These live on the Codespace, not the repo. They've caught at least
 one bug a CI matrix couldn't (commit `9b5c00b`).

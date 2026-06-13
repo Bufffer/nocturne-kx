@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue)](#build)
 
-Nocturne-KX is a C++23 cryptographic communication toolkit built around a patent-pending hybrid post-quantum KEM. It combines classical X25519 ECDH with ML-KEM-1024 (CRYSTALS-Kyber, NIST FIPS 203) and Ed25519 signatures with ML-DSA-87 (CRYSTALS-Dilithium, NIST FIPS 204) through SP 800-56C R2 combiners, so an attacker has to break both the classical and post-quantum layers to recover plaintext. All cryptographic operations go through libsodium or liboqs — no hand-rolled primitives anywhere in the codebase.
+Nocturne-KX is a C++23 cryptographic communication toolkit built around a hybrid post-quantum KEM. It combines classical X25519 ECDH with ML-KEM-1024 (CRYSTALS-Kyber, NIST FIPS 203) and Ed25519 signatures with ML-DSA-87 (CRYSTALS-Dilithium, NIST FIPS 204) through SP 800-56C R2 combiners, so an attacker has to break both the classical and post-quantum layers to recover plaintext. All cryptographic operations go through libsodium or liboqs — no hand-rolled primitives anywhere in the codebase.
 
 The library ships as a single static binary with no runtime dependencies beyond libsodium.
 
@@ -13,7 +13,7 @@ The library ships as a single static binary with no runtime dependencies beyond 
 
 **Hybrid PQC key exchange.** Three KEM modes: classical X25519, hybrid X25519 + ML-KEM-1024, and pure ML-KEM-1024. The receiver auto-detects the mode from the packet header; no out-of-band negotiation needed.
 
-**Bidirectional replay protection (patent-pending).** Per-session monotonic counters stored in an on-disk encrypted database. The counter file is AEAD-authenticated and written atomically via `rename(2)`, so a crash mid-write doesn't silently roll back replay state. A second decrypt of the same packet returns `ReplayDetected` and exits 2.
+**Bidirectional replay protection.** Per-session monotonic counters stored in an on-disk encrypted database. The counter file is AEAD-authenticated and written atomically via `rename(2)`, so a crash mid-write doesn't silently roll back replay state. A second decrypt of the same packet returns `ReplayDetected` and exits 2.
 
 **Hash-chained audit log.** Every encrypt and decrypt writes a JSONL record whose BLAKE2b-256 hash is chained to the previous entry. Records can be Ed25519-signed per-entry. `audit-verify` checks the entire chain in a single pass.
 
@@ -221,8 +221,6 @@ To report a vulnerability, email **serdarogluibrahim@gmail.com**. Do not open a 
 
 Copyright 2025-2026 Halil Ibrahim Serdaroglu. All rights reserved.
 
-- Patent pending: hybrid post-quantum KEM (Turkey Patent Office)
-- Patent pending: bidirectional replay protection with prefix-based counter separation
 - Nocturne-KX is a trademark of Halil Ibrahim Serdaroglu
 
 Source code is available under the [MIT License](LICENSE). Patent rights are reserved for the innovations described above.

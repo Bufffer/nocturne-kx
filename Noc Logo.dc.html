@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  *{ box-sizing: border-box; }
+  body{ margin:0; }
+  @keyframes nocblink { 0%,48%{ opacity:1 } 49%,100%{ opacity:0 } }
+</style>
+</helmet>
+
+<div style="background:#e7e9ee; min-height:100vh; font-family:'JetBrains Mono',monospace; color:#0B0E16; padding:56px 24px 96px;">
+ <div style="max-width:1060px; margin:0 auto; display:flex; flex-direction:column; gap:40px;">
+
+  <!-- PAGE HEADER -->
+  <div style="display:flex; flex-direction:column; gap:8px;">
+    <div style="display:flex; align-items:center; gap:10px; font-size:12px; letter-spacing:0.18em; text-transform:uppercase; color:#6b7385;">
+      <span style="width:8px; height:8px; border-radius:2px; background:#3D7BFF; display:inline-block;"></span>
+      <span>Logo Exploration</span>
+    </div>
+    <h1 style="margin:0; font-size:34px; font-weight:800; letter-spacing:-0.02em;">Noc&lt;T&gt;::KX</h1>
+    <p style="margin:0; max-width:560px; font-size:14px; line-height:1.6; color:#5b6275;">Monospace wordmark sistemi · retro / siber · terminal hissi. Aşağıda 4 yön, favicon türevleri ve gerçek kullanım örnekleri var.</p>
+  </div>
+
+  <!-- HERO: recommended primary -->
+  <div data-screen-label="Hero" style="position:relative; border-radius:20px; overflow:hidden; background:#0B0E16; background-image:radial-gradient(rgba(92,151,255,0.07) 1px, transparent 1px); background-size:24px 24px; padding:84px 32px; display:flex; flex-direction:column; align-items:center; gap:22px; border:1px solid rgba(255,255,255,0.06);">
+    <div style="position:absolute; top:18px; left:22px; font-size:11px; letter-spacing:0.16em; color:#4a5468; text-transform:uppercase;">Primary wordmark</div>
+    <div style="font-weight:800; letter-spacing:-0.025em; font-size:clamp(44px,8vw,86px); white-space:nowrap; line-height:1;">
+      <span style="color:#EAF0FB;">Noc</span><span style="color:#35DDF5; text-shadow:0 0 24px rgba(53,221,245,0.45);">&lt;T&gt;</span><span style="color:#5C97FF; text-shadow:0 0 22px rgba(92,151,255,0.4);">::</span><span style="color:#EAF0FB;">KX</span>
+    </div>
+    <div style="font-size:12px; letter-spacing:0.14em; color:#586176;">JetBrains&nbsp;Mono · 800 · syntax-highlighted tokens</div>
+  </div>
+
+  <!-- ===== DIRECTIONS ===== -->
+  <div style="display:flex; flex-direction:column; gap:34px;">
+
+   <!-- DIR 01 -->
+   <div style="display:flex; flex-direction:column; gap:14px;">
+     <div style="display:flex; align-items:baseline; gap:14px;">
+       <span style="font-size:13px; font-weight:700; color:#3D7BFF;">01</span>
+       <span style="font-size:16px; font-weight:700;">Syntax</span>
+       <span style="font-size:13px; color:#6b7385;">// IDE renklendirmesi — her token kendi rengi</span>
+     </div>
+     <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+       <div style="border-radius:16px; background:#0B0E16; background-image:radial-gradient(rgba(92,151,255,0.06) 1px,transparent 1px); background-size:22px 22px; min-height:170px; display:grid; place-items:center; border:1px solid rgba(255,255,255,0.06);">
+         <div style="font-weight:800; letter-spacing:-0.02em; font-size:42px; white-space:nowrap;"><span style="color:#EAF0FB;">Noc</span><span style="color:#35DDF5;">&lt;T&gt;</span><span style="color:#5C97FF;">::</span><span style="color:#EAF0FB;">KX</span></div>
+       </div>
+       <div style="border-radius:16px; background:#FAFBFD; min-height:170px; display:grid; place-items:center; border:1px solid rgba(11,14,22,0.08);">
+         <div style="font-weight:800; letter-spacing:-0.02em; font-size:42px; white-space:nowrap;"><span style="color:#0B0E16;">Noc</span><span style="color:#0E9FB8;">&lt;T&gt;</span><span style="color:#2F6BFF;">::</span><span style="color:#0B0E16;">KX</span></div>
+       </div>
+     </div>
+   </div>
+
+   <!-- DIR 02 -->
+   <div style="display:flex; flex-direction:column; gap:14px;">
+     <div style="display:flex; align-items:baseline; gap:14px;">
+       <span style="font-size:13px; font-weight:700; color:#3D7BFF;">02</span>
+       <span style="font-size:16px; font-weight:700;">Terminal</span>
+       <span style="font-size:13px; color:#6b7385;">// prompt + yanıp sönen imleç, Space Mono</span>
+     </div>
+     <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+       <div style="border-radius:16px; background:#0B0E16; min-height:170px; display:grid; place-items:center; border:1px solid rgba(255,255,255,0.06);">
+         <div style="font-family:'Space Mono',monospace; font-weight:700; font-size:38px; white-space:nowrap; display:flex; align-items:center;"><span style="color:#5C97FF; opacity:0.7; margin-right:0.4ch;">▸</span><span style="color:#EAF0FB;">Noc&lt;T&gt;::KX</span><span style="display:inline-block; width:0.55ch; height:0.92em; background:#35DDF5; margin-left:0.18em; animation:nocblink 1.1s steps(1) infinite;"></span></div>
+       </div>
+       <div style="border-radius:16px; background:#FAFBFD; min-height:170px; display:grid; place-items:center; border:1px solid rgba(11,14,22,0.08);">
+         <div style="font-family:'Space Mono',monospace; font-weight:700; font-size:38px; white-space:nowrap; display:flex; align-items:center;"><span style="color:#2F6BFF; opacity:0.8; margin-right:0.4ch;">▸</span><span style="color:#0B0E16;">Noc&lt;T&gt;::KX</span><span style="display:inline-block; width:0.55ch; height:0.92em; background:#2F6BFF; margin-left:0.18em; animation:nocblink 1.1s steps(1) infinite;"></span></div>
+       </div>
+     </div>
+   </div>
+
+   <!-- DIR 03 -->
+   <div style="display:flex; flex-direction:column; gap:14px;">
+     <div style="display:flex; align-items:baseline; gap:14px;">
+       <span style="font-size:13px; font-weight:700; color:#3D7BFF;">03</span>
+       <span style="font-size:16px; font-weight:700;">Bracket Badge</span>
+       <span style="font-size:13px; color:#6b7385;">// &lt;T&gt; bir rozete dönüşür — favicon'a kolayca taşınır</span>
+     </div>
+     <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+       <div style="border-radius:16px; background:#0B0E16; min-height:170px; display:grid; place-items:center; border:1px solid rgba(255,255,255,0.06);">
+         <div style="font-weight:800; letter-spacing:-0.01em; font-size:40px; white-space:nowrap; display:flex; align-items:center;"><span style="color:#EAF0FB;">Noc</span><span style="display:inline-flex; align-items:center; justify-content:center; font-size:0.78em; padding:0.1em 0.42em; margin:0 0.18em; border-radius:9px; border:2px solid rgba(53,221,245,0.55); background:rgba(53,221,245,0.12); color:#35DDF5;">&lt;T&gt;</span><span style="color:#5C97FF;">::</span><span style="color:#EAF0FB;">KX</span></div>
+       </div>
+       <div style="border-radius:16px; background:#FAFBFD; min-height:170px; display:grid; place-items:center; border:1px solid rgba(11,14,22,0.08);">
+         <div style="font-weight:800; letter-spacing:-0.01em; font-size:40px; white-space:nowrap; display:flex; align-items:center;"><span style="color:#0B0E16;">Noc</span><span style="display:inline-flex; align-items:center; justify-content:center; font-size:0.78em; padding:0.1em 0.42em; margin:0 0.18em; border-radius:9px; border:2px solid rgba(47,107,255,0.45); background:rgba(47,107,255,0.1); color:#2F6BFF;">&lt;T&gt;</span><span style="color:#2F6BFF;">::</span><span style="color:#0B0E16;">KX</span></div>
+       </div>
+     </div>
+   </div>
+
+   <!-- DIR 04 -->
+   <div style="display:flex; flex-direction:column; gap:14px;">
+     <div style="display:flex; align-items:baseline; gap:14px;">
+       <span style="font-size:13px; font-weight:700; color:#3D7BFF;">04</span>
+       <span style="font-size:16px; font-weight:700;">Two-tone</span>
+       <span style="font-size:13px; color:#6b7385;">// operatörler geri çekilir, Noc + KX öne çıkar</span>
+     </div>
+     <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+       <div style="border-radius:16px; background:#0B0E16; min-height:170px; display:grid; place-items:center; border:1px solid rgba(255,255,255,0.06);">
+         <div style="font-weight:800; letter-spacing:-0.02em; font-size:42px; white-space:nowrap;"><span style="color:#EAF0FB;">Noc</span><span style="color:#4f5a72;">&lt;T&gt;</span><span style="color:#4f5a72;">::</span><span style="color:#5C97FF;">KX</span></div>
+       </div>
+       <div style="border-radius:16px; background:#FAFBFD; min-height:170px; display:grid; place-items:center; border:1px solid rgba(11,14,22,0.08); position:relative;">
+         <div style="font-weight:800; letter-spacing:-0.02em; font-size:34px; line-height:1.05; text-align:right;"><span style="color:#0B0E16;">Noc</span><span style="color:#9aa2b4;">&lt;T&gt;</span><br><span style="color:#2F6BFF;">::</span><span style="color:#0B0E16;">KX</span></div>
+         <span style="position:absolute; bottom:14px; left:16px; font-size:11px; color:#9aa2b4;">stacked alt</span>
+       </div>
+     </div>
+   </div>
+
+  </div>
+
+  <!-- ===== FAVICONS ===== -->
+  <div style="display:flex; flex-direction:column; gap:16px;">
+    <div style="display:flex; align-items:baseline; gap:14px;">
+      <span style="font-size:13px; font-weight:700; color:#3D7BFF;">★</span>
+      <span style="font-size:16px; font-weight:700;">Favicon / App Icon</span>
+      <span style="font-size:13px; color:#6b7385;">// wordmark salt yazı, ama ikon için en ayırt edici token: &lt;T&gt;</span>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:16px;">
+
+      <!-- fav A solid blue -->
+      <div style="background:#FAFBFD; border:1px solid rgba(11,14,22,0.08); border-radius:16px; padding:24px; display:flex; flex-direction:column; align-items:center; gap:18px;">
+        <div style="width:72px; height:72px; border-radius:18px; background:linear-gradient(150deg,#4C8BFF,#2F6BFF); display:grid; place-items:center; box-shadow:0 8px 22px rgba(47,107,255,0.35);"><span style="font-weight:800; font-size:26px; color:#fff; letter-spacing:-0.02em;">&lt;T&gt;</span></div>
+        <div style="display:flex; align-items:center; gap:10px;"><span style="width:28px; height:28px; border-radius:7px; background:linear-gradient(150deg,#4C8BFF,#2F6BFF); display:grid; place-items:center;"><span style="font-weight:800; font-size:11px; color:#fff;">&lt;T&gt;</span></span><span style="font-size:11px; color:#8a93a6;">solid · 28px</span></div>
+      </div>
+
+      <!-- fav B dark cyan -->
+      <div style="background:#FAFBFD; border:1px solid rgba(11,14,22,0.08); border-radius:16px; padding:24px; display:flex; flex-direction:column; align-items:center; gap:18px;">
+        <div style="width:72px; height:72px; border-radius:18px; background:#0B0E16; display:grid; place-items:center; border:1px solid rgba(53,221,245,0.25);"><span style="font-weight:800; font-size:26px; color:#35DDF5; letter-spacing:-0.02em;">&lt;T&gt;</span></div>
+        <div style="display:flex; align-items:center; gap:10px;"><span style="width:28px; height:28px; border-radius:7px; background:#0B0E16; display:grid; place-items:center;"><span style="font-weight:800; font-size:11px; color:#35DDF5;">&lt;T&gt;</span></span><span style="font-size:11px; color:#8a93a6;">dark · 28px</span></div>
+      </div>
+
+      <!-- fav C light outline -->
+      <div style="background:#FAFBFD; border:1px solid rgba(11,14,22,0.08); border-radius:16px; padding:24px; display:flex; flex-direction:column; align-items:center; gap:18px;">
+        <div style="width:72px; height:72px; border-radius:18px; background:#fff; border:2px solid #2F6BFF; display:grid; place-items:center;"><span style="font-weight:800; font-size:26px; color:#2F6BFF; letter-spacing:-0.02em;">&lt;T&gt;</span></div>
+        <div style="display:flex; align-items:center; gap:10px;"><span style="width:28px; height:28px; border-radius:7px; background:#fff; border:2px solid #2F6BFF; display:grid; place-items:center;"><span style="font-weight:800; font-size:11px; color:#2F6BFF;">&lt;T&gt;</span></span><span style="font-size:11px; color:#8a93a6;">light · 28px</span></div>
+      </div>
+
+      <!-- fav D :: alt mark -->
+      <div style="background:#FAFBFD; border:1px solid rgba(11,14,22,0.08); border-radius:16px; padding:24px; display:flex; flex-direction:column; align-items:center; gap:18px;">
+        <div style="width:72px; height:72px; border-radius:18px; background:#0B0E16; display:grid; place-items:center;"><span style="font-weight:800; font-size:34px; color:#5C97FF; letter-spacing:0.02em; line-height:0; margin-top:-6px;">::</span></div>
+        <div style="display:flex; align-items:center; gap:10px;"><span style="width:28px; height:28px; border-radius:7px; background:#0B0E16; display:grid; place-items:center;"><span style="font-weight:800; font-size:15px; color:#5C97FF; line-height:0; margin-top:-3px;">::</span></span><span style="font-size:11px; color:#8a93a6;">:: alt · 28px</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===== IN CONTEXT ===== -->
+  <div style="display:flex; flex-direction:column; gap:16px;">
+    <div style="display:flex; align-items:baseline; gap:14px;">
+      <span style="font-size:13px; font-weight:700; color:#3D7BFF;">→</span>
+      <span style="font-size:16px; font-weight:700;">In context</span>
+      <span style="font-size:13px; color:#6b7385;">// gerçek kullanım</span>
+    </div>
+
+    <!-- website header dark -->
+    <div style="border-radius:16px; background:#0B0E16; border:1px solid rgba(255,255,255,0.06); overflow:hidden;">
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:18px 26px; border-bottom:1px solid rgba(255,255,255,0.07);">
+        <div style="font-weight:800; font-size:21px; letter-spacing:-0.02em;"><span style="color:#EAF0FB;">Noc</span><span style="color:#35DDF5;">&lt;T&gt;</span><span style="color:#5C97FF;">::</span><span style="color:#EAF0FB;">KX</span></div>
+        <div style="display:flex; align-items:center; gap:26px; font-size:13px; color:#aab2c4;">
+          <span>Docs</span><span>API</span><span>GitHub</span>
+          <span style="background:#2F6BFF; color:#fff; padding:8px 14px; border-radius:8px; font-weight:700; font-size:12px;">npm i noc-kx</span>
+        </div>
+      </div>
+      <div style="padding:40px 26px; color:#586176; font-size:13px;">// website header — koyu zemin</div>
+    </div>
+
+    <!-- github/npm light -->
+    <div style="border-radius:16px; background:#FAFBFD; border:1px solid rgba(11,14,22,0.08); padding:24px 26px; display:flex; align-items:center; gap:18px;">
+      <span style="width:46px; height:46px; border-radius:12px; background:linear-gradient(150deg,#4C8BFF,#2F6BFF); display:grid; place-items:center; flex:none; box-shadow:0 6px 16px rgba(47,107,255,0.3);"><span style="font-weight:800; font-size:17px; color:#fff;">&lt;T&gt;</span></span>
+      <div style="display:flex; flex-direction:column; gap:3px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-weight:800; font-size:19px; letter-spacing:-0.02em;"><span style="color:#0B0E16;">Noc</span><span style="color:#0E9FB8;">&lt;T&gt;</span><span style="color:#2F6BFF;">::</span><span style="color:#0B0E16;">KX</span></span>
+          <span style="font-size:11px; color:#2F6BFF; border:1px solid rgba(47,107,255,0.3); border-radius:20px; padding:2px 9px;">v0.4.2</span>
+        </div>
+        <span style="font-size:12px; color:#9aa2b4;">// README başlığı + favicon — açık zemin</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="font-size:11px; color:#9aa2b4; text-align:center; padding-top:8px;">Bir yön seç — onu son hâline getirip SVG, PNG (favicon boyutları) ve koyu/açık varyantlarıyla teslim ederim.</div>
+
+ </div>
+</div>
+</x-dc>
+</body>
+</html>

@@ -85,7 +85,7 @@ All failures exit with code 2 and a typed error name in stderr:
 | `SignatureMissing`            | `--expect-signer` set but packet lacks the flag. |
 | `SignatureVerifyFailed`       | Pinned signer doesn't match packet. |
 | `RotationStale`               | `rotation_id` below `--min-rotation`. |
-| `ReplayDetected`              | Counter ≤ last seen, patent-pending defence. |
+| `ReplayDetected`              | Counter ≤ last seen, bidirectional replay defence. |
 | `RateLimited`                 | Receiver bucket exhausted. |
 
 The error string `"replay"` appears verbatim on `ReplayDetected`.

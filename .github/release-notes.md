@@ -8,7 +8,7 @@ First tagged release of Nocturne-KX, a C++23 hybrid post-quantum cryptographic t
 
 - **Hybrid PQC KEM** — X25519 + ML-KEM-1024 (NIST FIPS 203) via SP 800-56C R2 combiner. Also supports classical-only and pure ML-KEM modes.
 - **Hybrid PQC signatures** — Ed25519 + ML-DSA-87 (NIST FIPS 204). Both halves must verify.
-- **Bidirectional replay protection (patent pending)** — per-session monotonic counters, AEAD-encrypted and MAC-authenticated on disk, atomic `rename(2)` writes.
+- **Bidirectional replay protection** — per-session monotonic counters, AEAD-encrypted and MAC-authenticated on disk, atomic `rename(2)` writes.
 - **PKCS#11 HSM integration** — full OASIS v2.40 `CK_FUNCTION_LIST`, validated against SoftHSM2 in CI. Compatible with Thales Luna, Utimaco, YubiHSM2, AWS CloudHSM.
 - **BLAKE2b hash-chained audit log** — optional per-record Ed25519 signatures, WORM directory mirroring, `audit-verify` CLI command.
 - **TLS 1.3 transport** — `tls-send` / `tls-recv` CLI subcommands, optional mTLS, SNI.
@@ -58,4 +58,4 @@ To report a vulnerability: **serdarogluibrahim@gmail.com**. Do not open a public
 
 Full changelog: [CHANGELOG.md](https://github.com/Bufffer/nocturne-kx/blob/main/CHANGELOG.md)
 Documentation: [bufffer.github.io/nocturne-kx](https://bufffer.github.io/nocturne-kx/)
-Patent pending: hybrid PQC KEM + bidirectional replay protection — Halil Ibrahim Serdaroglu
+Author: Halil Ibrahim Serdaroglu

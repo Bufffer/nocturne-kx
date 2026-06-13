@@ -47,8 +47,8 @@ later" and "lattice-based standards are mandatory" is closing fast.
 Nocturne-KX is the answer for teams that need to ship a single binary
 *today* that:
 
-- defends against state-level adversaries with a hybrid X25519 ⊕ ML-KEM-1024 KEM (patent pending),
-- protects every channel with bidirectional replay detection on a MAC-protected DB (patent pending),
+- defends against state-level adversaries with a hybrid X25519 ⊕ ML-KEM-1024 KEM,
+- protects every channel with bidirectional replay detection on a MAC-protected DB,
 - speaks PKCS#11 v2.40 to real HSMs (Thales, Utimaco, YubiHSM2, AWS CloudHSM, SoftHSM2 for dev),
 - hash-chains every operation into a verifiable, Ed25519-signed audit log,
 - and never leaves clean-up to the caller, `secure_zero_memory` + `flush_cache_line` + `memory_barrier` are the default.

@@ -1,9 +1,9 @@
 ---
 title: Replay protection
-description: How Nocturne-KX's bidirectional replay defence works, and why it's patent pending.
+description: How Nocturne-KX's bidirectional replay defence works.
 ---
 
-# Replay protection <span class="nx-badge nx-badge--violet">patent pending</span>
+# Replay protection
 
 The classic replay defence is "remember the last counter; reject
 anything ≤ that". Nocturne extends it in two ways:

@@ -133,7 +133,7 @@ cat ./plaintext
 
 ## Prove replay protection
 
-The patent-pending bidirectional replay defence rejects a second
+The bidirectional replay defence rejects a second
 decrypt of the same packet:
 
 ```bash

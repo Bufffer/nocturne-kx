@@ -26,12 +26,12 @@ All rights reserved. This software is the exclusive intellectual property of Hal
 
 The following innovations are proprietary to Halil İbrahim Serdaroğlu:
 
-1. **Hybrid Post-Quantum KEM System** (Patent Pending)
+1. **Hybrid Post-Quantum KEM System**
    - X25519 + ML-KEM-1024 combination with domain separation
    - BLAKE2b-based key derivation function
    - Atomic failure handling
 
-2. **Bidirectional Replay Protection** (Patent Pending)
+2. **Bidirectional Replay Protection**
    - Prefix-based counter separation (tx:/rx:)
    - MAC-protected counter storage
    - Single-database bidirectional protection

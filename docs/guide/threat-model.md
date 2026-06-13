@@ -38,9 +38,9 @@ hoping the receiver will accept and act on it.
 **Mitigation:** `ReplayDB` stores a monotonic counter per
 `(receiver, session)` tuple in a MAC-protected, atomically-written file.
 Any counter `≤ last seen` is rejected with `ErrorCode::ReplayDetected`
-*before* AEAD decryption is attempted. The patent-pending prefix-based
-counter separation means independent sessions can run in parallel
-without sharing a single linear counter that an attacker could exhaust.
+*before* AEAD decryption is attempted. The prefix-based counter separation means independent sessions can run
+in parallel without sharing a single linear counter that an attacker
+could exhaust.
 
 ### Pinned-signer impersonation
 
