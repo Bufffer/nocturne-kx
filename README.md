@@ -1,459 +1,228 @@
 # Nocturne-KX
 
-<div align="center">
-  <img src="548946a1-d4e7-451b-8294-6ccfa51c8364.png" alt="Nocturne-KX Logo" width="200"/>
+[![CI](https://github.com/Bufffer/nocturne-kx/actions/workflows/cmake.yml/badge.svg)](https://github.com/Bufffer/nocturne-kx/actions/workflows/cmake.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![C++23](https://img.shields.io/badge/C%2B%2B-23-blue)](#build)
 
-  <strong>Modern end-to-end cryptographic communication toolkit</strong>
+Nocturne-KX is a C++23 cryptographic communication toolkit built around a patent-pending hybrid post-quantum KEM. It combines classical X25519 ECDH with ML-KEM-1024 (CRYSTALS-Kyber, NIST FIPS 203) and Ed25519 signatures with ML-DSA-87 (CRYSTALS-Dilithium, NIST FIPS 204) through SP 800-56C R2 combiners, so an attacker has to break both the classical and post-quantum layers to recover plaintext. All cryptographic operations go through libsodium or liboqs — no hand-rolled primitives anywhere in the codebase.
 
-  <br/>
-  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"/>
-  <img src="https://img.shields.io/badge/C%2B%2B-23-blue" alt="C++23"/>
-  <img src="https://img.shields.io/badge/libsodium-1.0.18%2B-green" alt="libsodium 1.0.18+"/>
-  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey" alt="Platforms"/>
-  <img src="https://img.shields.io/badge/Status-Alpha-yellow" alt="Status: Alpha"/>
-</div>
+The library ships as a single static binary with no runtime dependencies beyond libsodium.
 
----
 
-## Overview
+## What it provides
 
-Nocturne-KX is a security-focused framework for building secure messaging and communication systems. It combines authenticated key exchange, forward secrecy, and a Double Ratchet core with practical operational features including replay protection, rate limiting, audit logging, and HSM-backed key storage.
+**Hybrid PQC key exchange.** Three KEM modes: classical X25519, hybrid X25519 + ML-KEM-1024, and pure ML-KEM-1024. The receiver auto-detects the mode from the packet header; no out-of-band negotiation needed.
 
-**Key design goals:**
-- Clear security boundaries and conservative defaults
-- Strict use of modern cryptographic primitives from libsodium
-- Production-oriented operational features (audit, rotation, monitoring)
-- Transparent, well-documented behavior
+**Bidirectional replay protection (patent-pending).** Per-session monotonic counters stored in an on-disk encrypted database. The counter file is AEAD-authenticated and written atomically via `rename(2)`, so a crash mid-write doesn't silently roll back replay state. A second decrypt of the same packet returns `ReplayDetected` and exits 2.
 
-**Current Status:** Alpha/Prototype - suitable for research, demos, and experimentation. **Not production-ready** without comprehensive security audit and additional hardening.
+**Hash-chained audit log.** Every encrypt and decrypt writes a JSONL record whose BLAKE2b-256 hash is chained to the previous entry. Records can be Ed25519-signed per-entry. `audit-verify` checks the entire chain in a single pass.
 
----
+**SIGMA-style handshake and Double Ratchet.** For long-lived sessions, the optional handshake layer runs a 3-message SIGMA exchange (Ed25519 identity, X25519 ephemeral, BLAKE2b transcript) and hands off to a Signal-style double ratchet with DH ratchet, send/receive chains, and skipped-key cache capped at 128 entries.
 
-## Features
+**PKCS#11 HSM integration.** A full OASIS PKCS#11 v2.40 adapter validated in CI against SoftHSM2. The CLI also ships a `FileHSM` for development: Ed25519 keys encrypted at rest with Argon2id-derived XChaCha20-Poly1305, passphrase via `NOCTURNE_HSM_PASSPHRASE` env var.
 
-### Core Cryptography
-- **X25519 ECDH** for key agreement
-- **XChaCha20-Poly1305 AEAD** for authenticated encryption
-- **Ed25519** for identity signatures
-- **BLAKE2b** for transcript hashing
-- **Argon2** for passphrase-based key protection
+**TLS 1.3 transport.** Optional OpenSSL transport layer with mTLS support and 4-byte big-endian length-prefixed framing. Mirrors the in-memory `MemoryTransport` used in tests.
 
-### Protocol Capabilities
-- **Authenticated SIGMA-style handshake** with transcript binding and Ed25519 identity signatures
-- **Double Ratchet core** with DH ratchet, send/receive chains, skipped key storage, out-of-order message handling, and state serialization
-- **Transport layer** supporting NEGOTIATE/DATA/ACK/NAK/CLOSE frames, sequence numbers, retry queues, and feature negotiation
-- **In-memory adapter** included for testing and development
+**Side-channel mitigations.** `sodium_memcmp` for all secret comparisons, `sodium_memzero` on key material, branchless `ct_select`, random 100–500 µs delay on authentication failure, and explicit cache-line flushes.
 
-### Operational Security
-- **ReplayDB:** Composite keys (receiver/sender/session), encrypted metadata, atomic writes with MAC protection, anti-rollback version counter, TPM counter support
-- **Rate Limiter:** Token-bucket algorithm with JSONL persistence, exponential backoff, configurable burst limits
-- **Audit Logger:** Hash-chained tamper-evident logging, Ed25519 digital signatures, WORM storage, SIEM integration support (Syslog, CEF, Splunk, ELK, Kafka)
-- **Key Rotation Manager:** Time/count/volume-based rotation triggers, dual-control approval workflow, HSM-backed key storage, comprehensive audit trail
-- **HSM Integration:** Abstract HSM interface, PKCS#11 wrapper, FileHSM with passphrase-encrypted keys
 
-### Side-Channel Protection
-- Constant-time comparisons (`sodium_memcmp`)
-- Secure memory zeroing (`sodium_memzero`)
-- SecureAllocator with memory locking, guard pages, and scrubbing
-- Branchless constant-time helpers
-- Optional random delay (configurable/disableable)
-- Cache line flushing and memory barriers
+## Build
 
----
+**Dependencies**
 
-## Architecture
-
-```
-Application
-  │
-  ├─ Handshake (SIGMA-style, Ed25519 identities, X25519 ephemeral)
-  │     └─ Transcript hashing, two-way KDF
-  │
-  ├─ Double Ratchet (DH ratchet, chains, skipped keys)
-  │
-  └─ Transport (negotiate, seq/ACK/NAK, retry) ── In-memory adapter
-        │
-        ├─ ReplayDB (encrypted metadata, rollback protection)
-        ├─ RateLimiter (persistent, token-bucket)
-        ├─ AuditLogger (hash-chained, signed, WORM)
-        ├─ KeyRotationManager (dual-control, HSM-backed)
-        └─ HSM Interface (FileHSM, PKCS#11)
-```
-
----
-
-## Quick Start
-
-### Prerequisites
-- **C++23 compiler:** GCC 12+, Clang 15+, or MSVC 2022
-- **CMake** 3.20+
-- **libsodium** 1.0.18+
-- **Catch2** 3.x (optional, for tests)
-
-### Installation
-
-#### Ubuntu/Debian
-```bash
-sudo apt-get update
-sudo apt-get install -y libsodium-dev pkg-config cmake build-essential
-```
-
-#### macOS
-```bash
-brew install libsodium pkg-config cmake
-```
-
-#### Windows (vcpkg)
-```bash
-vcpkg install libsodium:x64-windows
-```
-
-### Build
+| Tool | Version | Notes |
+|---|---|---|
+| CMake | >= 3.20 | |
+| GCC or Clang | C++23 | `std::expected`, `std::span` |
+| libsodium | >= 1.0.18 | |
+| liboqs | 0.12.0 | Auto-fetched via FetchContent if not installed |
+| OpenSSL | >= 3.0 | Optional, required for `ENABLE_TLS_TRANSPORT=ON` |
+| Catch2 | v3 | Optional, required for `BUILD_TESTS=ON` |
 
 ```bash
-# Clone repository
-git clone https://github.com/Bufffer/Nocturne-KX.git
-cd Nocturne-KX
+# Debian / Ubuntu
+sudo apt-get install -y build-essential cmake git pkg-config \
+  libsodium-dev libssl-dev ninja-build
 
-# Configure and build
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . -j
-
-# Run tests (optional)
-ctest --output-on-failure
+# macOS
+brew install cmake libsodium openssl@3
 ```
-
-**Windows-specific build:**
-```bash
-cmake .. -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake
-```
-
----
-
-## Usage
-
-### Key Management
 
 ```bash
-# Generate receiver key pair (X25519)
-./nocturne-kx gen-receiver keys/
+git clone https://github.com/Bufffer/nocturne-kx.git
+cd nocturne-kx
 
-# Generate signer key pair (Ed25519)
-./nocturne-kx gen-signer keys/
+cmake -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTS=ON \
+  -DENABLE_PQC=ON \
+  -DENABLE_TLS_TRANSPORT=ON
 
-# Generate signer key with passphrase-encrypted storage (FileHSM)
-./nocturne-kx gen-signer keys/ --hsm-pass "your-secure-passphrase"
+cmake --build build -j
 ```
 
-### Protocol Demos
+The binary lands at `build/nocturne-kx`. Run `./build/nocturne-kx self-test` before doing anything else — it checks that libsodium and liboqs both initialise correctly.
+
+
+## CLI quickstart
+
+**Generate keys**
 
 ```bash
-# Handshake demo
-./nocturne-kx hs-demo
-# Demonstrates: authenticated handshake, identity signatures,
-# transcript hashing, key derivation
+# Hybrid PQC receiver keypair (X25519 + ML-KEM-1024)
+./build/nocturne-kx gen-receiver ./keys --kem hybrid
+# -> receiver_hybrid_pk.bin (1600 B public), receiver_hybrid_sk.bin (3200 B secret)
 
-# Double Ratchet demo
-./nocturne-kx dr-demo
-# Demonstrates: DH ratchet, message keys, out-of-order handling,
-# state serialization
+# Hybrid PQC signer keypair (Ed25519 + ML-DSA-87)
+./build/nocturne-kx gen-signer ./keys --sig-type hybrid
+# -> sender_hybrid_sig_pk.bin (2624 B), sender_hybrid_sig_sk.bin (4960 B)
 ```
 
-### Encrypt / Decrypt
+**Encrypt**
 
 ```bash
-# Basic encryption
-./nocturne-kx encrypt \
-  --rx-pk keys/receiver_x25519_pk.bin \
-  --in message.txt \
-  --out encrypted.bin
-
-# Decryption with replay protection
-./nocturne-kx decrypt \
-  --rx-pk keys/receiver_x25519_pk.bin \
-  --rx-sk keys/receiver_x25519_sk.bin \
-  --replay-db /path/to/replay.db \
-  --mac-key /path/to/mac.key \
-  --in encrypted.bin \
-  --out decrypted.txt
+echo "meet at midnight" | ./build/nocturne-kx encrypt \
+  --rx-pk   ./keys/receiver_hybrid_pk.bin \
+  --kem     hybrid \
+  --pqc-sign-key  ./keys/sender_hybrid_sig_sk.bin \
+  --pqc-sig-type  hybrid \
+  --aad     "session-7f3a" \
+  --replay-db ./replay.db \
+  --in /dev/stdin --out msg.pkt
+# ok: 4859 bytes written
 ```
 
-### Advanced Features
+The packet carries a 78-byte header, 1600 B KEM ciphertext, the AEAD-encrypted payload, and a 4691 B hybrid signature. Every field is length-prefixed and little-endian.
 
-#### Digital Signatures (FileHSM)
-```bash
-./nocturne-kx encrypt \
-  --rx-pk keys/receiver_x25519_pk.bin \
-  --sign-hsm-uri file://keys/sender_ed25519_sk.bin \
-  --in message.txt \
-  --out encrypted_signed.bin
-```
-
-#### Rate Limiting
-```bash
-./nocturne-kx encrypt \
-  --rx-pk keys/receiver_x25519_pk.bin \
-  --rate-limit-store /path/to/rate_limits.jsonl \
-  --in message.txt \
-  --out encrypted.bin
-```
-
-#### Audit Logging (Signed and Hash-Chained)
-```bash
-# Enable audit log with Ed25519 signing and WORM output
-./nocturne-kx encrypt \
-  --rx-pk keys/receiver_x25519_pk.bin \
-  --audit-log logs/audit.jsonl \
-  --audit-sign-key keys/audit_ed25519_sk.bin \
-  --audit-worm-dir logs/worm \
-  --in message.txt \
-  --out encrypted.bin
-
-# With external timestamp anchor (RFC 3161 TSA token)
-./nocturne-kx encrypt \
-  --rx-pk keys/receiver_x25519_pk.bin \
-  --audit-log logs/audit.jsonl \
-  --audit-sign-key keys/audit_ed25519_sk.bin \
-  --audit-anchor anchors/tsa_token.bin \
-  --in message.txt \
-  --out encrypted.bin
-```
-
-#### ReplayDB with TPM Counter
-```bash
-# Use ReplayDB with external monotonic counter for rollback detection
-./nocturne-kx encrypt \
-  --rx-pk keys/receiver_x25519_pk.bin \
-  --replay-db state/replay.bin \
-  --mac-key state/replay.mac \
-  --tpm-counter state/tpm_counter.bin \
-  --in message.txt \
-  --out encrypted.bin
-```
-
-### Global CLI Flags
-- `--rate-limit-store <path>`: Persist token-bucket state
-- `--audit-log <path>`: JSONL audit log path
-- `--audit-sign-key <path>`: Ed25519 secret key for signing audit entries
-- `--audit-anchor <path>`: External timestamp anchor blob
-- `--audit-worm-dir <dir>`: Write-once-read-many directory
-- `--tpm-counter <path>`: External monotonic counter (8-byte LE)
-- `--hsm-pass <passphrase>`: Passphrase for FileHSM-encrypted keys
-
----
-
-## Deployment
-
-### Docker
+**Decrypt**
 
 ```bash
-# Build image
-docker build -t nocturne-kx:3.0.0 .
+./build/nocturne-kx decrypt \
+  --rx-pk ./keys/receiver_hybrid_pk.bin \
+  --rx-sk ./keys/receiver_hybrid_sk.bin \
+  --expect-pqc-signer ./keys/sender_hybrid_sig_pk.bin \
+  --pqc-sig-type hybrid \
+  --replay-db ./replay.db \
+  --in msg.pkt --out plaintext
 
-# Run container
-docker run --rm -it \
-  -v $(pwd)/keys:/keys:ro \
-  -v $(pwd)/state:/state \
-  nocturne-kx:3.0.0 gen-receiver /keys
-
-# Security scan
-trivy image nocturne-kx:3.0.0
-
-# SBOM generation
-syft nocturne-kx:3.0.0 -o spdx-json > sbom.json
+cat plaintext
+# meet at midnight
 ```
 
-### Docker Compose
+**Replay rejection**
 
 ```bash
-docker-compose up -d
+./build/nocturne-kx decrypt \
+  --rx-pk ./keys/receiver_hybrid_pk.bin \
+  --rx-sk ./keys/receiver_hybrid_sk.bin \
+  --replay-db ./replay.db \
+  --in msg.pkt --out /dev/null
+# ReplayDetected: counter 1 <= last seen 1
+# exit 2
 ```
 
-### Kubernetes
+**Audit chain verification**
 
 ```bash
-# Deploy
-kubectl apply -f k8s/deployment.yaml
-
-# Check status
-kubectl get pods -l app=nocturne-kx
-
-# View logs
-kubectl logs -f deployment/nocturne-kx
+./build/nocturne-kx audit-verify ./audit.log \
+  --expect-signer ./keys/auditor_pk.bin
+# ok: 247 records verified
+# chain head: 7f3a...c4d2
 ```
 
----
+
+## KEM modes
+
+| Mode | Flag | Ciphertext | Shared secret | Post-quantum |
+|---|---|---|---|---|
+| `x25519` | `--kem x25519` | 32 B | 32 B | No |
+| `hybrid` | `--kem hybrid` | 1600 B | 32 B (combined) | Yes |
+| `mlkem1024` | `--kem mlkem1024` | 1568 B | 32 B | Yes (only) |
+
+Hybrid mode feeds both shared secrets through the SP 800-56C R2 KDF with `NOCTURNE_PROTOCOL_VERSION=4` as domain separator. This is the default and recommended mode.
+
+
+## HSM integration
+
+For production key storage, point the signer at a PKCS#11 URI:
+
+```bash
+./build/nocturne-kx encrypt \
+  --rx-pk ./keys/receiver_hybrid_pk.bin \
+  --sign-hsm-uri "pkcs11:token=NocturneToken;object=sender-key" \
+  --in message.txt --out msg.pkt
+```
+
+Environment variables:
+
+| Variable | Purpose |
+|---|---|
+| `PKCS11_LIB` | Path to the PKCS#11 shared library |
+| `NOCTURNE_HSM_PIN` | HSM user PIN |
+| `NOCTURNE_HSM_FIPS` | Set to `1` to enforce FIPS-only mechanisms |
+| `NOCTURNE_HSM_PASSPHRASE` | Passphrase for FileHSM-encrypted keys (dev only) |
+
+The CI pipeline runs the PKCS#11 adapter against SoftHSM2. See [`.github/workflows/cmake.yml`](.github/workflows/cmake.yml) for the "SoftHSM PKCS#11 integration" step.
+
+
+## TLS transport
+
+```bash
+# Start receiver
+./build/nocturne-kx tls-recv \
+  --cert server.pem --key server-key.pem \
+  --rx-pk ./keys/receiver_hybrid_pk.bin \
+  --rx-sk ./keys/receiver_hybrid_sk.bin \
+  --port 9443
+
+# Send from another terminal
+./build/nocturne-kx tls-send \
+  --host 127.0.0.1 --port 9443 \
+  --rx-pk ./keys/receiver_hybrid_pk.bin \
+  --kem hybrid \
+  --in message.txt
+```
+
+The TLS layer requires `ENABLE_TLS_TRANSPORT=ON` at build time and OpenSSL >= 3.0.
+
 
 ## Documentation
 
-- **Security Guide:** [`docs/SECURITY.md`](docs/SECURITY.md)
-  - Cryptographic primitives documentation
-  - Threat model analysis
-  - Security limitations and best practices
-  - Deployment considerations
+Full documentation is at **[bufffer.github.io/nocturne-kx](https://bufffer.github.io/nocturne-kx/)**, including:
 
-- **Operations Guide:** [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
-  - Installation and configuration
-  - Deployment guides (Systemd, Docker, Kubernetes)
-  - Monitoring setup (Prometheus, Grafana)
-  - Maintenance procedures and troubleshooting
-  - Compliance considerations (FIPS, GDPR, ISO 27001)
+- Architecture and module map
+- Wire format (every byte, in order)
+- KEM and signature mode reference
+- HSM setup with SoftHSM2 and Thales Luna
+- Audit log internals
+- Replay protection internals
+- Full CLI reference
 
----
 
-## Status & Roadmap
+## Tests
 
-### Current Status
-- **Alpha/Prototype:** Suitable for research, demos, and experimentation
-- **Not production-hardened:** Subject to change without formal security review
-
-### Known Limitations
-- Real transport adapters (TCP/QUIC) not yet implemented - currently in-memory only
-- PKCS#11 HSM integration is stubbed - requires production implementation
-- SIEM connectors are framework only - actual implementations needed
-- No formal security audit or penetration testing conducted
-- No quantum-resistant cryptography (acknowledged design limitation)
-
-### Roadmap
-- [ ] Complete transport layer implementations (TCP, QUIC, WebSocket)
-- [ ] Production PKCS#11 HSM integration
-- [ ] SIEM connector implementations (Splunk HEC, Elasticsearch, Kafka)
-- [ ] Comprehensive integration and load testing
-- [ ] Performance optimization and benchmarking
-- [ ] Metrics and observability (Prometheus, OpenTelemetry)
-- [ ] Enhanced operational tooling (health checks, automated rotation)
-- [ ] Formal security audit and penetration testing
-- [ ] FIPS 140-2/3 certification path
-- [ ] Noise protocol integration
-- [ ] Post-quantum cryptography exploration
-
----
-
-## Security Notice
-
-⚠️ **IMPORTANT:** This software is provided as an alpha/prototype. It has **not undergone formal security review or audit**.
-
-**Do NOT deploy in production** without:
-- Comprehensive independent security audit
-- Penetration testing
-- Appropriate compliance processes (SOC 2, ISO 27001, etc.)
-- Formal security validation for your specific use case
-
-**For production deployments:**
-- Use real HSMs (PKCS#11) - FileHSM is for development only
-- Implement proper key management and backup procedures
-- Enable comprehensive audit logging and monitoring
-- Follow NIST SP 800-57 key management guidelines
-- Conduct regular security assessments
-
-**Reporting Security Issues:**
-If you discover a security vulnerability, please email: **serdarogluibrahim@gmail.com**
-
-Do not open public GitHub issues for security vulnerabilities.
-
----
-
-## Testing
-
-### Unit Tests
 ```bash
-# Build with tests
-cmake .. -DENABLE_TESTING=ON
-cmake --build . -j
-
-# Run tests
-ctest --output-on-failure
-
-# Run with verbose output
-ctest -V
+cmake -B build -DBUILD_TESTS=ON
+cmake --build build -j
+cd build && ctest --output-on-failure
 ```
 
-### CI/CD Pipeline
-The project includes comprehensive CI/CD workflows:
-- **Build jobs:** Release + Debug builds with sanitizers (ASAN, UBSAN, MSAN)
-- **Security scans:** CodeQL, Trivy, cppcheck, Scorecard
-- **SBOM generation:** syft (SPDX, CycloneDX)
-- **Dependency scanning:** Grype
-- **Secret scanning:** Gitleaks, TruffleHog
+CI runs four workflows on every push: sanitizer build (ASAN + UBSAN + MSAN), comprehensive integration tests including SoftHSM PKCS#11, fuzzing with libFuzzer, and a security audit (CodeQL, Trivy, cppcheck, Gitleaks).
 
-See [`.github/workflows/`](.github/workflows/) for details.
 
----
+## Security
 
-## Contributing
+All cryptographic operations are either libsodium calls, liboqs calls, or combinations through an OASIS/NIST-published combiner. If you find a hand-rolled cipher, hash, or constant-time comparison anywhere in `src/`, treat it as a bug.
 
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes with clear commit messages
-4. Add tests for new functionality
-5. Ensure all tests pass and security scans are clean
-6. Submit a pull request
+To report a vulnerability, email **serdarogluibrahim@gmail.com**. Do not open a public issue.
 
-**Before contributing:**
-- Review [`docs/SECURITY.md`](docs/SECURITY.md)
-- Follow C++23 best practices
-- Use libsodium for all cryptographic operations
-- Add appropriate error handling and input validation
-- Include documentation for new features
 
----
+## Intellectual property
 
-## Intellectual Property
+Copyright 2025-2026 Halil Ibrahim Serdaroglu. All rights reserved.
 
-**Copyright © 2025-2026 Halil İbrahim Serdaroğlu. All rights reserved.**
+- Patent pending: hybrid post-quantum KEM (Turkey Patent Office)
+- Patent pending: bidirectional replay protection with prefix-based counter separation
+- Nocturne-KX is a trademark of Halil Ibrahim Serdaroglu
 
-### Ownership
-This software is the exclusive intellectual property of **Halil İbrahim Serdaroğlu**.
-
-### Patents
-- **Patent Pending**: Hybrid Post-Quantum Key Encapsulation Mechanism (Turkey Patent Office)
-- **Patent Pending**: Bidirectional Replay Protection with Prefix-Based Counter Separation
-
-### Trademarks
-- **Nocturne-KX™** is a trademark of Halil İbrahim Serdaroğlu
-
-### Trade Secrets
-Certain implementation details, optimizations, and security configurations are proprietary trade secrets.
-
----
-
-## License
-
-MIT License - see [`LICENSE`](LICENSE) file for details.
-
-**Important**: While the code is open source under MIT License, the name "Nocturne-KX™" is a registered trademark. Patent rights are reserved for specific innovations described in patent applications.
-
----
-
-## Contact
-
-**Author:** Halil İbrahim Serdaroğlu
-**Email:** serdarogluibrahim@gmail.com
-**GitHub:** [@Bufffer](https://github.com/Bufffer)
-
-For general questions, feature requests, or bug reports (non-security), please open a GitHub issue.
-
-For commercial licensing inquiries, contact directly via email.
-
----
-
-## Acknowledgments
-
-Built with:
-- [libsodium](https://libsodium.org/) - Modern cryptographic library
-- [Catch2](https://github.com/catchorg/Catch2) - Testing framework
-- [CMake](https://cmake.org/) - Build system
-
-Inspired by:
-- Signal Protocol's Double Ratchet
-- Noise Protocol Framework
-- SIGMA key exchange protocols
-- NIST cryptographic standards
-
----
-
-<div align="center">
-  <sub>Built with ❤️ for secure communications</sub>
-</div>
+Source code is available under the [MIT License](LICENSE). Patent rights are reserved for the innovations described above.

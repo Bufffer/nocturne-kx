@@ -13,12 +13,13 @@ and the policy layer can be exercised independently.
 
 ## System overview
 
-<NocturneArchFlow />
-
-The only "magic" sits in `src/protocol/messaging.cpp`, which composes the
-sub-systems. Everything else is a leaf: `KEMInterface::encapsulate` does
-exactly what its name says, returns `Result&lt;T&gt;` on failure, and never
-touches global state.
+The CLI (`nocturne-kx.cpp`) is a thin dispatch layer. User input flows
+into one of two high-level helpers (`encrypt_packet` or `decrypt_packet`),
+which are the only places where all sub-systems meet. Each sub-system
+is a leaf: `KEMInterface::encapsulate` does exactly what its name says,
+returns `Result<T>` on failure, and never touches global state. The
+policy layer (`messaging.cpp`) is the single point that sequences KEM,
+AEAD, signing, replay-DB write, and audit-log entry into a transaction.
 
 ## Module map
 

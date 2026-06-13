@@ -114,6 +114,25 @@ exit 2
 </template>
 
 <style scoped>
+/* ---------- theme tokens ---------- */
+.nx-showcase {
+  --nx-pane-bg:      #0d0e15;
+  --nx-pane-text:    #e2e8f0;
+  --nx-hl-comment:   #64748b;
+  --nx-hl-str:       #fbbf24;
+  --nx-hl-err:       #f43f5e;
+  --nx-head-overlay: rgba(255,255,255,0.02);
+}
+
+:root:not(.dark) .nx-showcase {
+  --nx-pane-bg:    #f6f8fa;
+  --nx-pane-text:  #1e293b;
+  --nx-hl-comment: #6b7280;
+  --nx-hl-str:     #0369a1;
+  --nx-hl-err:     #dc2626;
+  --nx-head-overlay: rgba(0,0,0,0.03);
+}
+
 .nx-showcase {
   max-width: 1180px;
   margin: 0 auto;
@@ -188,7 +207,7 @@ exit 2
 .nx-pane {
   border: 1px solid var(--vp-c-divider);
   border-radius: 10px;
-  background: var(--vp-code-block-bg, #0d0e15);
+  background: var(--nx-pane-bg);
   overflow: hidden;
 }
 
@@ -201,7 +220,7 @@ exit 2
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.78rem;
   color: var(--vp-c-text-3);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--nx-head-overlay);
 }
 .nx-pane__dot {
   width: 8px;
@@ -217,12 +236,12 @@ exit 2
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.78rem;
   line-height: 1.6;
-  color: #e2e8f0;
+  color: var(--nx-pane-text);
   overflow-x: auto;
   background: transparent;
 }
 
-.hl-comment { color: #64748b; font-style: italic; }
-.hl-str     { color: #fbbf24; }
-.hl-err     { color: #f43f5e; font-weight: 600; }
+.hl-comment { color: var(--nx-hl-comment); font-style: italic; }
+.hl-str     { color: var(--nx-hl-str); }
+.hl-err     { color: var(--nx-hl-err); font-weight: 600; }
 </style>
