@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config \
+            libsodium-dev libssl-dev
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_PQC=ON \
+            -DENABLE_TLS_TRANSPORT=ON \
+            -DENABLE_HARDENING=ON \
+            -DENABLE_LTO=ON \
+            -DBUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Strip and rename
+        run: |
+          strip build/nocturne-kx
+          cp build/nocturne-kx nocturne-kx-linux-x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: nocturne-kx-linux-x86_64
+
+  release:
+    needs: build-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64
+
+      - name: Compute SHA-256
+        run: sha256sum nocturne-kx-linux-x86_64 > nocturne-kx-linux-x86_64.sha256
+
+      - name: Extract version from tag
+        id: tag
+        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.tag.outputs.version }}" \
+            nocturne-kx-linux-x86_64 \
+            nocturne-kx-linux-x86_64.sha256 \
+            --title "Nocturne-KX ${{ steps.tag.outputs.version }}" \
+            --notes-file .github/release-notes.md \
+            --prerelease
