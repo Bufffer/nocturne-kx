@@ -2,7 +2,7 @@
  * @file nocturne-kx.cpp
  * @brief Nocturne-KX: Post-Quantum Secure Key Exchange and Messaging Protocol
  *
- * Copyright (c) 2025 Halil İbrahim Serdaroğlu
+ * Copyright (c) 2025-2026 Halil İbrahim Serdaroğlu
  *
  * This software is the exclusive property of Halil İbrahim Serdaroğlu.
  * All rights reserved.

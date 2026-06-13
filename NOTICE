@@ -1,5 +1,5 @@
 NOCTURNE-KX
-Copyright © 2025 Halil İbrahim Serdaroğlu
+Copyright © 2025-2026 Halil İbrahim Serdaroğlu
 All Rights Reserved
 
 ================================================================================
@@ -107,6 +107,19 @@ This software includes or depends on the following third-party components:
    - Copyright: Catch2 contributors
    - Website: https://github.com/catchorg/Catch2
 
+4. OpenSSL (TLS 1.3 transport, SIEM TLS sink)
+   - License: Apache License 2.0
+   - Copyright: The OpenSSL Project Authors
+   - Website: https://www.openssl.org
+   - Used by: src/tcp_tls_transport.hpp, src/security/siem_connector.hpp
+     (linked when ENABLE_TLS_TRANSPORT=ON; optional)
+
+5. SoftHSM2 (PKCS#11 integration testing only — not redistributed)
+   - License: BSD 2-Clause
+   - Copyright: .SE - The Internet Foundation in Sweden
+   - Website: https://www.opendnssec.org/softhsm/
+   - Used by: tests/test_main.cpp [softhsm] suite + cmake.yml CI step
+
 ================================================================================
 
 CRYPTOGRAPHIC NOTICE
@@ -189,5 +202,5 @@ For commercial licensing:
 
 ================================================================================
 
-Last Updated: January 2025
-Version: 4.0.0
+Last Updated: June 2026
+Version: 4.0.0 (active branch — see CHANGELOG.md for release history)

@@ -402,7 +402,7 @@ Contributions are welcome! Please:
 
 ## Intellectual Property
 
-**Copyright © 2025 Halil İbrahim Serdaroğlu. All rights reserved.**
+**Copyright © 2025-2026 Halil İbrahim Serdaroğlu. All rights reserved.**
 
 ### Ownership
 This software is the exclusive intellectual property of **Halil İbrahim Serdaroğlu**.
