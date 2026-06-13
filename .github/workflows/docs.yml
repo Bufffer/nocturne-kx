@@ -47,6 +47,12 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Auto-enable Pages on the repo the first time this workflow
+          # runs. Without this, the maintainer would have to flip
+          # "Pages → Source: GitHub Actions" by hand before the deploy
+          # step can resolve the gh-pages target.
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
