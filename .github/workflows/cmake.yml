@@ -111,21 +111,19 @@ jobs:
     # not just compiles. Without this step the [hsm] suite only exercises
     # FileHSM, so a regression in the PKCS#11 wiring would land silently.
     #
-    # NOTE: Currently non-blocking (|| true). First run of this step on
-    # 2026-06-13 SIGSEGV'd inside the PKCS11HSM ctor — root cause is a
-    # latent bug in the hand-rolled CK_FUNCTION_LIST in
-    # src/hsm/pkcs11_hsm.hpp: missing CK_VERSION prefix field and ~50
-    # functions skipped, so every functions_->C_* call lands at the wrong
-    # offset of SoftHSM's real function list. Tracked as P7.1; this step
-    # stays in CI as a smoke detector but won't block main until then.
-    - name: SoftHSM PKCS#11 integration (smoke; non-blocking pending P7.1)
+    # Re-enabled as must-pass after P7.1 (CK_FUNCTION_LIST layout fix in
+    # src/hsm/pkcs11_hsm.hpp expanded the hand-rolled struct to the full
+    # OASIS PKCS#11 v2.40 layout: 1 CK_VERSION prefix + 68 function
+    # pointer slots in spec order). Any future drift between our struct
+    # and the provider's real function list will surface here.
+    - name: SoftHSM PKCS#11 integration (must pass)
       working-directory: ${{github.workspace}}/build
       env:
         SOFTHSM2_CONF: ${{github.workspace}}/.softhsm/softhsm2.conf
         NOCTURNE_HSM_TOKEN: nocturne-test
         NOCTURNE_HSM_PIN: "1234"
       run: |
-        ./nocturne-tests "[softhsm]" || true
+        ./nocturne-tests "[softhsm]"
 
   build-debug:
     runs-on: ubuntu-latest

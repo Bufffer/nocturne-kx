@@ -116,27 +116,103 @@ struct CK_MECHANISM {
     CK_ULONG ulParameterLen;
 };
 
-// PKCS#11 function list (abridged - most commonly used functions)
+// PKCS#11 v2.40 version struct — sits at the head of CK_FUNCTION_LIST.
+// SoftHSM2 and every other compliant provider write {major=2, minor=40}
+// here. Two bytes; natural alignment pads it to a pointer slot on the
+// next field, which is part of why a struct that omits this prefix
+// reads every subsequent function pointer at the wrong offset.
+struct CK_VERSION {
+    CK_BYTE major;
+    CK_BYTE minor;
+};
+
+// Full PKCS#11 v2.40 CK_FUNCTION_LIST layout (OASIS spec §A.6).
+//
+// The provider (SoftHSM2, Thales Luna, Utimaco, AWS CloudHSM, YubiHSM2,
+// …) hands us a pointer to its function list via C_GetFunctionList.
+// THE STRUCT LAYOUT MUST MATCH THE SPEC EXACTLY: 1 version prefix + 68
+// function pointers in this order. A short or reordered struct lets
+// `functions_->C_Sign` resolve to a completely different slot — silent
+// memory corruption at best, SIGSEGV the moment the dispatched function
+// touches an argument.
+//
+// We only declare typed signatures for the 17 functions this codebase
+// actually calls; the remaining 51 are reserved as `void*` slots so the
+// layout stays correct without forcing us to maintain typedefs we don't
+// use. Adding a new call site means promoting the matching slot from
+// `void*` to its typed signature in place — never reordering.
 struct CK_FUNCTION_LIST {
+    CK_VERSION version;
+
     CK_RV (*C_Initialize)(CK_VOID_PTR);
     CK_RV (*C_Finalize)(CK_VOID_PTR);
+    void*  C_GetInfo;
+    void*  C_GetFunctionList;
     CK_RV (*C_GetSlotList)(CK_BBOOL, CK_SLOT_ID*, CK_ULONG*);
+    void*  C_GetSlotInfo;
+    void*  C_GetTokenInfo;
+    void*  C_GetMechanismList;
+    void*  C_GetMechanismInfo;
+    void*  C_InitToken;
+    void*  C_InitPIN;
+    void*  C_SetPIN;
     CK_RV (*C_OpenSession)(CK_SLOT_ID, CK_FLAGS, CK_VOID_PTR, CK_VOID_PTR, CK_SESSION_HANDLE*);
     CK_RV (*C_CloseSession)(CK_SESSION_HANDLE);
+    void*  C_CloseAllSessions;
+    void*  C_GetSessionInfo;
+    void*  C_GetOperationState;
+    void*  C_SetOperationState;
     CK_RV (*C_Login)(CK_SESSION_HANDLE, CK_ULONG, CK_BYTE*, CK_ULONG);
     CK_RV (*C_Logout)(CK_SESSION_HANDLE);
+    void*  C_CreateObject;
+    void*  C_CopyObject;
+    void*  C_DestroyObject;
+    void*  C_GetObjectSize;
+    CK_RV (*C_GetAttributeValue)(CK_SESSION_HANDLE, CK_OBJECT_HANDLE, CK_ATTRIBUTE*, CK_ULONG);
+    void*  C_SetAttributeValue;
     CK_RV (*C_FindObjectsInit)(CK_SESSION_HANDLE, CK_ATTRIBUTE*, CK_ULONG);
     CK_RV (*C_FindObjects)(CK_SESSION_HANDLE, CK_OBJECT_HANDLE*, CK_ULONG, CK_ULONG*);
     CK_RV (*C_FindObjectsFinal)(CK_SESSION_HANDLE);
-    CK_RV (*C_GetAttributeValue)(CK_SESSION_HANDLE, CK_OBJECT_HANDLE, CK_ATTRIBUTE*, CK_ULONG);
+    void*  C_EncryptInit;
+    void*  C_Encrypt;
+    void*  C_EncryptUpdate;
+    void*  C_EncryptFinal;
+    void*  C_DecryptInit;
+    void*  C_Decrypt;
+    void*  C_DecryptUpdate;
+    void*  C_DecryptFinal;
+    void*  C_DigestInit;
+    void*  C_Digest;
+    void*  C_DigestUpdate;
+    void*  C_DigestKey;
+    void*  C_DigestFinal;
     CK_RV (*C_SignInit)(CK_SESSION_HANDLE, CK_MECHANISM*, CK_OBJECT_HANDLE);
     CK_RV (*C_Sign)(CK_SESSION_HANDLE, CK_BYTE*, CK_ULONG, CK_BYTE*, CK_ULONG*);
+    void*  C_SignUpdate;
+    void*  C_SignFinal;
+    void*  C_SignRecoverInit;
+    void*  C_SignRecover;
     CK_RV (*C_VerifyInit)(CK_SESSION_HANDLE, CK_MECHANISM*, CK_OBJECT_HANDLE);
     CK_RV (*C_Verify)(CK_SESSION_HANDLE, CK_BYTE*, CK_ULONG, CK_BYTE*, CK_ULONG);
+    void*  C_VerifyUpdate;
+    void*  C_VerifyFinal;
+    void*  C_VerifyRecoverInit;
+    void*  C_VerifyRecover;
+    void*  C_DigestEncryptUpdate;
+    void*  C_DecryptDigestUpdate;
+    void*  C_SignEncryptUpdate;
+    void*  C_DecryptVerifyUpdate;
+    void*  C_GenerateKey;
     CK_RV (*C_GenerateKeyPair)(CK_SESSION_HANDLE, CK_MECHANISM*, CK_ATTRIBUTE*, CK_ULONG,
                                CK_ATTRIBUTE*, CK_ULONG, CK_OBJECT_HANDLE*, CK_OBJECT_HANDLE*);
+    void*  C_WrapKey;
+    void*  C_UnwrapKey;
+    void*  C_DeriveKey;
+    void*  C_SeedRandom;
     CK_RV (*C_GenerateRandom)(CK_SESSION_HANDLE, CK_BYTE*, CK_ULONG);
-    // ... (many more functions exist in full PKCS#11 spec)
+    void*  C_GetFunctionStatus;
+    void*  C_CancelFunction;
+    void*  C_WaitForSlotEvent;
 };
 
 typedef CK_RV (*CK_C_GetFunctionList)(CK_FUNCTION_LIST**);
