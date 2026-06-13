@@ -1,6 +1,6 @@
 ---
 title: Signature modes
-description: Ed25519, hybrid Ed25519+ML-DSA-87, pure ML-DSA-87 — what each binds to and where to use it.
+description: Ed25519: hybrid Ed25519+ML-DSA-87, pure ML-DSA-87, what each binds to and where to use it.
 ---
 
 # Signature modes
@@ -10,7 +10,7 @@ A Nocturne packet can carry:
 - A **classical** Ed25519 detached signature (`FLAG_HAS_SIG`, fixed 64 B).
 - A **post-quantum** variable-length signature (`FLAG_HAS_PQC_SIG`).
 
-The two are *orthogonal* — both can be set together for a
+The two are *orthogonal*, both can be set together for a
 hybrid-signed packet that an Ed25519-only verifier still trusts.
 
 ## Choosing
@@ -53,12 +53,12 @@ a discarded result.
 | Secret key              | 64 B    | 4960 B | 4896 B         |
 | Signature               | 64 B    | 4691 B | 4627 B         |
 
-Hybrid is exactly `Ed25519 || ML-DSA-87` — concatenated raw, no length
+Hybrid is exactly `Ed25519 || ML-DSA-87`, concatenated raw, no length
 prefix between them (the fixed sizes are pinned at compile time by
 `static_assert` in `pqc_config.hpp` so a future ML-DSA-87 size
 revision triggers a build break).
 
-Verification is logical AND — both halves must check independently.
+Verification is logical AND, both halves must check independently.
 A forged Ed25519 signature paired with a valid ML-DSA-87 still
 rejects.
 
@@ -88,10 +88,10 @@ without invalidating the signature.
 ## HSM-backed Ed25519
 
 When `--sign-hsm-uri` is set, the CLI delegates the Ed25519 sign step
-to the HSM. The HSM never returns the secret key — every signature is
+to the HSM. The HSM never returns the secret key, every signature is
 computed on-device via `CKM_EDDSA`. See the [HSM guide](../guide/hsm).
 
-The PQ signer path (`--pqc-sign-key`) is a separate code path —
+The PQ signer path (`--pqc-sign-key`) is a separate code path.
 no HSM support yet, since ML-DSA-aware HSMs are still rare. When
 ML-DSA hardware lands, the `SignatureScheme` interface absorbs it
 without protocol changes; just add a new factory backend.

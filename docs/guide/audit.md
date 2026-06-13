@@ -1,6 +1,6 @@
 ---
 title: Audit log
-description: Hash-chained, Ed25519-signed JSONL with O(records) verification — Nocturne-KX writes one and verifies it on demand.
+description: Hash-chained, Ed25519-signed JSONL with O(records) verification. Nocturne-KX writes one and verifies it on demand.
 ---
 
 # Audit log
@@ -24,7 +24,7 @@ directory for immutability.
 - If `--audit-sign-key` was passed, each record also carries `sig`
   (64 B base64 Ed25519 detached signature over canonical bytes).
 
-The first record's `prev_hash` is 32 zero bytes — the chain "head".
+The first record's `prev_hash` is 32 zero bytes, the chain "head".
 
 ## Enabling
 
@@ -113,10 +113,10 @@ bounded; the first error is always the most informative.
 Audit records can be forwarded to a SIEM via the configured
 `SIEMConnector`. Currently wired sinks:
 
-- **SYSLOG_UDP** — RFC 5424
-- **SYSLOG_TCP** — RFC 6587 octet-counting
-- **SYSLOG_TLS** — RFC 5425 with TLS 1.3 + optional mTLS
-- **CEF / LEEF** — formatters wrap any of the above transports
+- **SYSLOG_UDP**, RFC 5424
+- **SYSLOG_TCP**, RFC 6587 octet-counting
+- **SYSLOG_TLS**, RFC 5425 with TLS 1.3 + optional mTLS
+- **CEF / LEEF**, formatters wrap any of the above transports
 
 HTTP-based sinks (Splunk HEC, Elasticsearch, Kafka, generic webhook)
 are stubbed pending a libcurl + librdkafka dependency decision. See

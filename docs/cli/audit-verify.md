@@ -1,6 +1,6 @@
 ---
 title: audit-verify
-description: Walk a JSONL audit log, recompute the BLAKE2b hash chain, verify Ed25519 per-record signatures.
+description: Walk a JSONL audit log: recompute the BLAKE2b hash chain, verify Ed25519 per-record signatures.
 ---
 
 # `audit-verify`
@@ -65,14 +65,14 @@ The chain hash is computed over a deterministic byte serialisation:
 - UTF-8 throughout.
 
 This means the on-disk pretty-printed form can be re-pretty-printed
-without breaking the chain — but content changes (adding a field,
+without breaking the chain, but content changes (adding a field,
 modifying a value) break it deterministically.
 
 ## Two different formats
 
 The CLI's inline `audit_log::AuditLogger` (legacy) and the enterprise
 `nocturne::security::AuditLogger` write subtly different canonical
-forms. `audit-verify` accepts both — it sniffs the first record's
+forms. `audit-verify` accepts both, it sniffs the first record's
 shape to pick the right canonicaliser.
 
 Bridging the two formats is a tracked cleanup item; in the meantime,

@@ -10,10 +10,29 @@ Nocturne-KX uses post-quantum cryptography in two places:
 - **Key encapsulation (KEM)** for confidentiality of the AEAD key.
 - **Digital signatures** for authenticity of the entire packet.
 
-Both surfaces ship in **hybrid mode by default** — classical
-primitive in parallel with a NIST-standardised lattice scheme,
+Both surfaces ship in **hybrid mode by default**: a classical
+primitive runs in parallel with a NIST-standardised lattice scheme,
 combined through a domain-separated KDF. An attacker has to break
 both halves to compromise a packet.
+
+## Algorithm picker
+
+```mermaid
+flowchart LR
+    Q{What's your<br/>threat model?}
+    Q -->|Pre-quantum<br/>compatibility| C[Classical<br/>X25519 + Ed25519]
+    Q -->|Defence in depth<br/>recommended| H[Hybrid<br/>X25519 + ML-KEM-1024<br/>Ed25519 + ML-DSA-87]
+    Q -->|Pure post-quantum<br/>archive-immune| P[Pure<br/>ML-KEM-1024 + ML-DSA-87]
+
+    C --> CS[32 B ciphertext<br/>64 B signature]
+    H --> HS[1600 B ciphertext<br/>4691 B signature]
+    P --> PS[1568 B ciphertext<br/>4627 B signature]
+
+    HS -.->|recommended<br/>default| Default([Hybrid<br/>is default])
+
+    style Default fill:#1a1230,stroke:#a855f7,color:#c084fc,stroke-width:2px
+    style H fill:#161826,stroke:#22d3ee,stroke-width:2.5px
+```
 
 ## Available algorithms
 
@@ -46,14 +65,14 @@ Three reasons:
 
 1. **No catastrophic single point of failure.** ML-KEM is brand new
    in the wild. Hybrid mode means a future Module-LWE break only
-   downgrades us to classical X25519 security — still ~128-bit
+   downgrades us to classical X25519 security, still ~128-bit
    classical.
 2. **Audit trail compatibility.** The hybrid signature embeds the
    Ed25519 half, so legacy verifiers that pin a classical PK keep
    working during the transition.
 3. **Combined secret is at least as strong as the strongest input.**
    The NIST SP 800-56C R2 combiner is proven to inherit the security
-   of the strongest contributor — so even if X25519 is broken
+   of the strongest contributor, so even if X25519 is broken
    classically and ML-KEM holds, we're still secure.
 
 ## Why ML-KEM-1024 and ML-DSA-87 specifically
@@ -76,7 +95,7 @@ combined_secret = KDF(
 )
 ```
 
-`PROTOCOL_VERSION` is **not** the same as the packet `ver` byte —
+`PROTOCOL_VERSION` is **not** the same as the packet `ver` byte.
 [the wire-format page](../guide/wire-format#version-policy) explains
 the split. Conflating the two was the bug fixed by commit `9b5c00b`.
 
@@ -84,17 +103,17 @@ the split. Conflating the two was the bug fixed by commit `9b5c00b`.
 
 ## What's not used
 
-- **NTRU**, **NTRU-Prime**, **HQC** — alternates from NIST round 4
+- **NTRU**, **NTRU-Prime**, **HQC**, alternates from NIST round 4
   that didn't make the standard. Not in liboqs's default profile.
-- **SLH-DSA (SPHINCS+)** — hash-based signature with multi-second
+- **SLH-DSA (SPHINCS+)**, hash-based signature with multi-second
   sign times. Excellent for offline root signing; not a fit for a
   per-packet signer.
-- **Classic McEliece** — large public keys (≈ 1 MiB) make it
+- **Classic McEliece**, large public keys (≈ 1 MiB) make it
   impractical for our wire format.
-- **Falcon** — competitive ML-DSA alternative, but its constant-time
+- **Falcon**, competitive ML-DSA alternative, but its constant-time
   Gaussian sampler implementation in liboqs is not currently
   side-channel reviewed to our standard.
 
 If your threat model requires one of these, the `KEMInterface` /
-`SignatureScheme` are designed for it — add a new factory entry and
+`SignatureScheme` are designed for it, add a new factory entry and
 a wire ID and the rest of the protocol stays unchanged.

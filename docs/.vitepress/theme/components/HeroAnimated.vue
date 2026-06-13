@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /* --------------------------------------------------------------------------
-   HeroAnimated — bespoke hero with a constellation of cipher glyphs
+   HeroAnimated, bespoke hero with a constellation of cipher glyphs
    drifting on a canvas, gradient overlay, gradient headline. Renders
    only client-side (canvas) so SSR builds skip it cleanly.
    -------------------------------------------------------------------------- */

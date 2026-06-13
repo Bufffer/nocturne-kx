@@ -1,13 +1,13 @@
 ---
 title: Wire format
-description: Every byte of the Nocturne-KX v3 packet, in order, with width and meaning.
+description: Every byte of the Nocturne-KX v3 packet: in order, with width and meaning.
 ---
 
 # Wire format <span class="nx-badge nx-badge--violet">v3</span>
 
 A Nocturne-KX packet is a length-prefixed binary frame. The shape is
 identical across classical X25519, hybrid X25519 ⊕ ML-KEM-1024, and
-pure ML-KEM-1024 — the receiver picks the path from the `flags` byte
+pure ML-KEM-1024, the receiver picks the path from the `flags` byte
 without re-parsing the rest.
 
 <WireFormat />
@@ -60,7 +60,7 @@ flowchart LR
 | `aad_len` + `ct_len`| `u32`                        | Wire field                          |
 
 Oversized fields are rejected at `deserialize` time with
-`ErrorCode::PacketFieldOversized` — see `src/core/error.hpp` for the
+`ErrorCode::PacketFieldOversized`, see `src/core/error.hpp` for the
 SIEM-stable error number.
 
 ## Version policy
@@ -76,5 +76,5 @@ axes:
 - A new wire field bumps `ver` without changing the combiner.
 
 Conflating these two surfaces silently (sender and receiver derive
-different secrets) was the bug fixed by commit `9b5c00b` — see
+different secrets) was the bug fixed by commit `9b5c00b`, see
 [lessons learned](https://github.com/Bufffer/nocturne-kx/blob/main/CHANGELOG.md).

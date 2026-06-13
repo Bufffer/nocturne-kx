@@ -1,6 +1,6 @@
 ---
 title: encrypt
-description: Encrypt a file into a Nocturne-KX packet — classical, hybrid, or pure PQC. Optional classical and/or PQ signatures.
+description: Encrypt a file into a Nocturne-KX packet: classical, hybrid, or pure PQC. Optional classical and/or PQ signatures.
 ---
 
 # `encrypt`
@@ -39,7 +39,7 @@ nocturne-kx encrypt \
 |-----------------------|---------|-------------|
 | `--kem`               | `x25519`| KEM algorithm. See [KEM modes](../pqc/kem). |
 | `--sign-hsm-uri`      | unset   | URI selecting an Ed25519 signer. `file://` reads a raw or `NCHSM2` SK file; `hsm://` drives `PKCS11HSM`. |
-| `--aad`               | empty   | Associated authenticated data — covered by the AEAD tag. |
+| `--aad`               | empty   | Associated authenticated data, covered by the AEAD tag. |
 | `--rotation-id`       | `0`     | Key-rotation counter. Receiver enforces `--min-rotation` floor. |
 | `--ratchet`           | off     | Mix an ephemeral DH share into the AEAD key for forward secrecy. |
 | `--pqc-sign-key`      | unset   | Path to a PQ signer SK file (matches `--pqc-sig-type`'s SK size). |
@@ -83,7 +83,7 @@ nocturne-kx encrypt \
 
 ## What gets written
 
-A serialised v3 packet — see [wire format](../guide/wire-format) for
+A serialised v3 packet, see [wire format](../guide/wire-format) for
 the field-by-field breakdown. Size is deterministic from the flags:
 
 | Mode | Approximate size |

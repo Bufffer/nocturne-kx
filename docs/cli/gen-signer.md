@@ -1,6 +1,6 @@
 ---
 title: gen-signer
-description: Generate a Nocturne-KX signer keypair (Ed25519, hybrid Ed25519+ML-DSA-87, or pure ML-DSA-87).
+description: Generate a Nocturne-KX signer keypair (Ed25519: hybrid Ed25519+ML-DSA-87, or pure ML-DSA-87).
 ---
 
 # `gen-signer`
@@ -47,7 +47,7 @@ use the HSM's own key-generation interface (e.g. `pkcs11-tool` or
 `KeyRotationManager::generate_initial_key`) and reference the result
 via `hsm://token:label` in `encrypt --sign-hsm-uri`.
 
-PQ signatures (`--pqc-sig-type hybrid|mldsa`) are software-only — no
+PQ signatures (`--pqc-sig-type hybrid|mldsa`) are software-only, no
 HSM hardware ships ML-DSA-87 at scale yet.
 
 ## Exit codes

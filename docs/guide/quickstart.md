@@ -9,6 +9,25 @@ This walks you from `git clone` to a working hybrid post-quantum encrypt /
 decrypt roundtrip. Tested on Ubuntu 24.04, macOS 14, and GitHub Codespaces.
 Windows builds via WSL2 follow the same recipe.
 
+```mermaid
+journey
+    title Your first hybrid PQC roundtrip
+    section Setup
+      Install deps        : 5: You
+      Clone + build       : 4: You
+      Run self-test       : 5: CLI
+    section Keys
+      gen-receiver hybrid : 5: CLI
+      gen-signer hybrid   : 5: CLI
+    section Roundtrip
+      encrypt             : 5: CLI
+      decrypt             : 5: CLI
+      cmp plaintext       : 5: You
+    section Prove defences
+      Replay rejected     : 5: CLI
+      Bad signer rejected : 5: CLI
+```
+
 ::: tip Time budget
 Five minutes if libsodium is already installed; ten if you need
 `liboqs` to fetch-and-build via CMake's `FetchContent` fallback.
@@ -22,7 +41,7 @@ Five minutes if libsodium is already installed; ten if you need
 | GCC or Clang| C++23   | `std::expected`, `std::span`, designated initialisers  |
 | libsodium   | ≥ 1.0.18| Every classical primitive                              |
 | liboqs      | 0.12.0  | Auto-fetched if not system-installed (ML-KEM, ML-DSA)  |
-| OpenSSL     | ≥ 3.0   | Optional — only if `ENABLE_TLS_TRANSPORT=ON`           |
+| OpenSSL     | ≥ 3.0   | Optional, only if `ENABLE_TLS_TRANSPORT=ON`           |
 
 ```bash
 # Debian / Ubuntu
@@ -58,8 +77,8 @@ The resulting binary lives at `build/nocturne-kx`. Sanity check:
 ./build/nocturne-kx self-test
 ```
 
-If `self-test` reports any failure, **stop** and open an issue —
-the binary's other subcommands assume libsodium and ML-KEM both initialise
+If `self-test` reports any failure, **stop** and open an issue.
+The binary's other subcommands assume libsodium and ML-KEM both initialise
 cleanly.
 
 ## Generate hybrid PQC keys
@@ -114,7 +133,7 @@ What just happened, in plain English:
 
 ## Decrypt
 
-The receiver auto-detects the KEM mode from the flags byte — no
+The receiver auto-detects the KEM mode from the flags byte, no
 `--kem` needed.
 
 ```bash
@@ -147,7 +166,7 @@ decrypt of the same packet:
 
 You've now exercised the full hybrid PQC path end-to-end. Next stops:
 
-- [Architecture](../architecture) — modules, threading model, libsodium boundary.
-- [HSM integration](./hsm) — moving keys off disk into a PKCS#11 token.
-- [Wire format](./wire-format) — every byte explained.
-- [CLI reference](../cli/) — every subcommand and flag.
+- [Architecture](../architecture), modules, threading model, libsodium boundary.
+- [HSM integration](./hsm), moving keys off disk into a PKCS#11 token.
+- [Wire format](./wire-format), every byte explained.
+- [CLI reference](../cli/), every subcommand and flag.

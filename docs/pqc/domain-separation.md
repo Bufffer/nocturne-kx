@@ -9,6 +9,43 @@ A subtle but important property of Nocturne's combiner: every KDF
 output is bound to an explicit context label, so two different
 operations never accidentally derive the same key from the same input.
 
+## The bug, visualised
+
+Commit `9b5c00b` fixed the kind of regression this entire system is
+designed to prevent. The sender bound to one version, the receiver
+bound to another, and the AEAD silently failed at decryption time
+without the receiver ever knowing why.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> SenderEncap
+    SenderEncap: Sender encapsulate
+    SenderEncap --> SenderKDF
+    SenderKDF: KDF(label = ".../v4/combine")
+    SenderKDF --> SenderKey: key_A
+    SenderKey: AEAD key A
+
+    [*] --> RxDecap
+    RxDecap: Receiver decapsulate
+    RxDecap --> RxKDF
+    RxKDF: KDF(label = ".../v3/combine") (BUG)
+    RxKDF --> RxKey: key_B
+    RxKey: AEAD key B
+
+    SenderKey --> Verdict
+    RxKey --> Verdict
+    Verdict: AeadAuthFailed (silent)
+
+    Verdict --> Fix
+    Fix: Bind both sides to NOCTURNE_PROTOCOL_VERSION (commit 9b5c00b)
+    Fix --> [*]
+```
+
+After the fix, both sides bind to `NOCTURNE_PROTOCOL_VERSION` (currently
+4), distinct from the packet `ver` byte (currently 3). See
+[wire-format version policy](../guide/wire-format#version-policy).
+
 ## The labels
 
 | Context | Label string |
@@ -19,7 +56,7 @@ operations never accidentally derive the same key from the same input.
 | ReplayDB encryption key | `"NOCTURNE/REPLAY/v1/macsk"` |
 
 `PROTOCOL_VERSION` is the **logical** protocol version (currently 4),
-distinct from the packet `ver` byte (currently 3) — see
+distinct from the packet `ver` byte (currently 3), see
 [wire format / version policy](../guide/wire-format#version-policy).
 
 ## Why this matters
@@ -33,7 +70,7 @@ That sounds benign until you realise:
   intend.
 - A future protocol revision that reuses the combiner under a new
   context (say, audit log encryption) would silently key the same
-  bytes as the KEM combiner — a related-key attack waiting to happen.
+  bytes as the KEM combiner, a related-key attack waiting to happen.
 
 By labelling every KDF call, the protocol promises that **the only
 way two outputs are equal is if both inputs and labels are equal**.
@@ -47,13 +84,13 @@ bound to `NOCTURNE_PROTOCOL_VERSION` (4), but `decrypt_packet_kem`
 was passing the outer packet `ver` byte (3). Sender and receiver
 derived different combined secrets, AEAD auth fail.
 
-The user found it running `./demo.sh` on a GitHub Codespace — five
+The user found it running `./demo.sh` on a GitHub Codespace, five
 minutes of end-to-end work caught what a CI matrix of compile and
 sanitizer jobs couldn't. The lesson is now permanent:
 
 > When a KDF takes a "version" input, both encapsulator and
 > decapsulator MUST agree on the value. Don't conflate "outer
-> protocol version" with "KEM combiner version" — they evolve on
+> protocol version" with "KEM combiner version", they evolve on
 > different axes.
 
 ## When you'd revise this
@@ -79,5 +116,5 @@ The audit log records the negotiated `PROTOCOL_VERSION` per
 operation. If you ever see two records with the same plaintext,
 same key, and different ciphertexts, the labels are doing their job.
 If you see the same ciphertext under two different contexts, file an
-issue — that's a domain-separation regression and we want to know
+issue, that's a domain-separation regression and we want to know
 immediately.

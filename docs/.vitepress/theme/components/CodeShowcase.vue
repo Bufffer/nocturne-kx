@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /* --------------------------------------------------------------------------
-   CodeShowcase — three-pane "in 30 seconds" demo: sender, receiver,
+   CodeShowcase, three-pane "in 30 seconds" demo: sender, receiver,
    attacker. Each pane is a static highlighted snippet; tabs swap which
    pane sits in the foreground on mobile.
    -------------------------------------------------------------------------- */
@@ -18,7 +18,7 @@ const active = ref<Tab>('sender')
       </h2>
       <p class="nx-showcase__sub">
         Three calls, one binary. Hybrid X25519 + ML-KEM-1024, hash-chained audit log,
-        replay DB on disk — defaults are production-grade.
+        replay DB on disk, defaults are production-grade.
       </p>
     </header>
 
@@ -48,7 +48,7 @@ $ nocturne-kx gen-signer ./keys --sig-type <span class="hl-str">hybrid</span>
 Wrote Hybrid-Ed25519-ML-DSA-87 signer keys to ./keys
   (pk=2624B, sk=4960B)
 
-<span class="hl-comment"># 3. Encrypt — hybrid KEM + hybrid signature, single call</span>
+<span class="hl-comment"># 3. Encrypt, hybrid KEM + hybrid signature, single call</span>
 $ echo <span class="hl-str">"meet at midnight"</span> | nocturne-kx encrypt \
     --rx-pk    ./keys/receiver_hybrid_pk.bin \
     --kem      <span class="hl-str">hybrid</span> \

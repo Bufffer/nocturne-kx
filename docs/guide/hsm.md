@@ -1,6 +1,6 @@
 ---
 title: HSM integration
-description: Drive Nocturne-KX from a real PKCS#11 token — SoftHSM2 for dev/CI, Thales / Utimaco / YubiHSM2 / AWS CloudHSM for production.
+description: Drive Nocturne-KX from a real PKCS#11 token, SoftHSM2 for dev/CI, Thales / Utimaco / YubiHSM2 / AWS CloudHSM for production.
 ---
 
 # HSM integration
@@ -17,7 +17,7 @@ HSM mode. The CLI selects an HSM via a URI scheme:
 `NCHSM2` format (Argon2id-derived AEAD + passphrase via
 `NOCTURNE_HSM_PASSPHRASE`).
 
-## SoftHSM2 — local dev and CI
+## SoftHSM2, local dev and CI
 
 The cheapest way to exercise the PKCS#11 code path is SoftHSM2. The
 [CI workflow](https://github.com/Bufffer/nocturne-kx/blob/main/.github/workflows/cmake.yml)
@@ -49,15 +49,15 @@ export NOCTURNE_HSM_PIN=1234
 
 Behind the scenes the CLI's inline `PKCS11HSM` is a thin adapter that
 forwards every call to `nocturne::hsm::PKCS11HSM`. The full v2.40
-`CK_FUNCTION_LIST` layout — 68 function pointer slots in OASIS spec
-order — was rewritten in P7.1 (commit `c8f9767`) after the SoftHSM CI
+`CK_FUNCTION_LIST` layout, 68 function pointer slots in OASIS spec
+order, was rewritten in P7.1 (commit `c8f9767`) after the SoftHSM CI
 step caught a struct misalignment that had been latent for months.
 
 ::: tip CI proves the wiring
 The `cmake.yml` workflow's "SoftHSM PKCS#11 integration (must pass)"
 step generates a key in SoftHSM, signs with it, then verifies the
 signature against the public key the HSM just reported. 13 assertions
-across one Catch2 case — green on every push to `main`.
+across one Catch2 case, green on every push to `main`.
 :::
 
 ## Production providers
@@ -91,10 +91,50 @@ export YUBIHSM_PKCS11_CONF=/path/to/yubihsm_pkcs11.conf
 export PKCS11_LIB=/opt/cloudhsm/lib/libcloudhsm_pkcs11.so
 ```
 
+## PKCS#11 call flow
+
+What the CLI actually does on the wire when you set `--sign-hsm-uri "hsm://..."`:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CLI as nocturne-kx encrypt
+    participant ADP as Inline PKCS11HSM adapter
+    participant IMP as nocturne::hsm::PKCS11HSM
+    participant LIB as libsofthsm2.so
+    participant DEV as Token (SoftHSM2)
+
+    CLI->>ADP: sign(packet_bytes)
+    ADP->>IMP: forward via env vars
+    IMP->>LIB: C_GetFunctionList
+    LIB-->>IMP: CK_FUNCTION_LIST*
+    IMP->>LIB: C_Initialize
+    IMP->>LIB: C_GetSlotList(token=nocturne)
+    LIB-->>IMP: slot_id
+    IMP->>LIB: C_OpenSession(slot_id, RW)
+    LIB-->>IMP: session_handle
+    IMP->>LIB: C_Login(USER, PIN)
+    Note over IMP,LIB: PIN zeroed immediately
+    IMP->>LIB: C_FindObjectsInit(label)
+    IMP->>LIB: C_FindObjects, C_FindObjectsFinal
+    LIB-->>IMP: priv_key_handle
+    IMP->>LIB: C_SignInit(CKM_EDDSA, priv_handle)
+    IMP->>LIB: C_Sign(packet_bytes)
+    LIB->>DEV: hardware sign
+    DEV-->>LIB: 64 B Ed25519 signature
+    LIB-->>IMP: signature
+    IMP-->>ADP: signature
+    ADP-->>CLI: signature
+    CLI->>CLI: assemble + serialise packet
+```
+
+The full v2.40 `CK_FUNCTION_LIST` layout makes every one of these
+calls land at the correct offset (P7.1 fix).
+
 ## Mechanism support
 
 Nocturne uses **CKM_EDDSA** (PKCS#11 v3.0+) for Ed25519. Verify your
-provider exposes it via `pkcs11-tool --list-mechanisms` — the older
+provider exposes it via `pkcs11-tool --list-mechanisms`, the older
 **CKM_ECDSA** is not Ed25519-compatible and the CLI refuses to fall
 back silently. Key generation uses **CKM_EC_EDWARDS_KEY_PAIR_GEN**
 with `CKA_EC_PARAMS = id-Ed25519` OID DER.
@@ -104,7 +144,7 @@ with `CKA_EC_PARAMS = id-Ed25519` OID DER.
 `nocturne::hsm::PKCS11HSM` reports `require_fips` in `get_status()`.
 The CLI's inline adapter respects `NOCTURNE_HSM_FIPS=1` to refuse a
 slot whose `CK_TOKEN_INFO` doesn't carry the FIPS flag. SoftHSM2 is
-not FIPS certified — use FIPS mode only with a real device.
+not FIPS certified, use FIPS mode only with a real device.
 
 ## Audit trail
 

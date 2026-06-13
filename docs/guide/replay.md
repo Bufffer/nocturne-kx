@@ -17,9 +17,40 @@ anything ≤ that". Nocturne extends it in two ways:
    version), so swapping in an attacker-controlled DB or truncating
    the file fails at load time, not at first false-accept.
 
-The patent application covers the prefix-based counter separation —
-specifically the way independent sessions multiplex through one DB
+The patent application covers the prefix-based counter separation:
+specifically, the way independent sessions multiplex through one DB
 without sharing a single monotonic count.
+
+## The defence in action
+
+```mermaid
+sequenceDiagram
+    participant A as Alice (sender)
+    participant N as Network
+    participant B as Bob (receiver)
+    participant DB as ReplayDB
+
+    A->>N: packet#1 (counter=1)
+    N->>B: deliver
+    B->>DB: has_seen(alice, sess, 1)?
+    DB-->>B: no
+    B->>DB: record(alice, sess, 1)
+    B-->>A: ACK
+
+    Note over N: Mallory captures packet#1
+
+    N->>B: replay packet#1
+    B->>DB: has_seen(alice, sess, 1)?
+    DB-->>B: yes (last=1)
+    B-->>N: ReplayDetected, exit 2
+
+    A->>N: packet#2 (counter=2)
+    N->>B: deliver
+    B->>DB: has_seen(alice, sess, 2)?
+    DB-->>B: no
+    B->>DB: record(alice, sess, 2)
+    B-->>A: ACK
+```
 
 ## On-disk format
 
@@ -28,7 +59,7 @@ without sharing a single monotonic count.
 ```
 
 - `version` is the file format version. The high bit doubles as the
-  "encrypted" flag — a non-encrypted dev DB has the high bit clear
+  "encrypted" flag, a non-encrypted dev DB has the high bit clear
   and skips the AEAD block.
 - `nonce` is fresh on every write.
 - `ct` is `XChaCha20-Poly1305(key, nonce, plaintext, aad=version)`.
@@ -78,7 +109,7 @@ or PSA counter path:
 ```
 
 The DB's logical counter is then bound to the TPM's hardware
-monotonic counter — any rollback that drops the DB below the TPM
+monotonic counter, any rollback that drops the DB below the TPM
 value is detected on the next read.
 
 ## CLI commands

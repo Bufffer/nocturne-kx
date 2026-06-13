@@ -6,7 +6,7 @@ description: Carry one encrypted Nocturne packet over TLS 1.3 with optional mTLS
 # `tls-send` / `tls-recv`
 
 One-shot TLS 1.3 sender and receiver pair. The on-the-wire payload
-is the same opaque packet `encrypt` produced — TLS just provides
+is the same opaque packet `encrypt` produced, TLS just provides
 reachability, server authentication, and optional mTLS.
 
 See the [TLS guide](../guide/tls) for the operational story; this
@@ -70,7 +70,7 @@ nocturne-kx tls-send \
 ### mTLS
 
 ```bash
-# Receiver — requires a client cert signed by the named CA
+# Receiver, requires a client cert signed by the named CA
 nocturne-kx tls-recv \
   --port 8443 \
   --cert server.crt --key server.key \

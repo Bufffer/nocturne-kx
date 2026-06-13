@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /* --------------------------------------------------------------------------
-   FeatureGrid — 6-tile capability matrix sitting below the hero.
+   FeatureGrid, 6-tile capability matrix sitting below the hero.
    Each tile lists a primitive + a one-line justification + an anchor.
    -------------------------------------------------------------------------- */
 
@@ -31,7 +31,7 @@ const features: Feature[] = [
   },
   {
     title: 'PKCS#11 HSM integration',
-    body: 'Production-grade adapter — Thales, Utimaco, YubiHSM2, AWS CloudHSM, SoftHSM2. CKM_EDDSA + session pool.',
+    body: 'Production-grade adapter, Thales, Utimaco, YubiHSM2, AWS CloudHSM, SoftHSM2. CKM_EDDSA + session pool.',
     href: './guide/hsm',
     iconPath:
       'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z',
@@ -71,7 +71,7 @@ const features: Feature[] = [
         Six primitives. One binary. Audit-trail by default.
       </h2>
       <p class="nx-features__sub">
-        Nocturne-KX folds modern cryptography into the operational shape of a Unix tool —
+        Nocturne-KX folds modern cryptography into the operational shape of a Unix tool.
         text in, ciphertext out, every operation hash-chained.
       </p>
     </header>

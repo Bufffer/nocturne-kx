@@ -1,11 +1,12 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
-// Repo deploys at https://bufffer.github.io/nocturne-kx/ — base must
+// Repo deploys at https://bufffer.github.io/nocturne-kx/. The base must
 // match the repo name so assets resolve correctly. Override via
 // DOCS_BASE env var when previewing from a different root.
 const base = process.env.DOCS_BASE ?? '/nocturne-kx/'
 
-export default defineConfig({
+export default withMermaid(defineConfig({
   base,
   lang: 'en-US',
   title: 'Nocturne-KX',
@@ -120,7 +121,7 @@ export default defineConfig({
     footer: {
       message:
         'Patent-pending hybrid PQC KEM and bidirectional replay protection. Nocturne-KX™ is a trademark of Halil İbrahim Serdaroğlu.',
-      copyright: 'Copyright © 2025-2026 Halil İbrahim Serdaroğlu — MIT License'
+      copyright: 'Copyright © 2025-2026 Halil İbrahim Serdaroğlu · MIT License'
     },
 
     outline: {
@@ -132,5 +133,63 @@ export default defineConfig({
   markdown: {
     theme: { light: 'github-light', dark: 'github-dark-dimmed' },
     lineNumbers: false
+  },
+
+  // Mermaid theming, the diagrams pick up our cyan/violet brand and
+  // the dark-first background. Animations (entrance fade, path draw)
+  // are layered on via style.css keyframes targeting .mermaid svg.
+  mermaid: {
+    theme: 'base',
+    securityLevel: 'loose',
+    themeVariables: {
+      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+      fontSize: '14px',
+
+      darkMode: true,
+      background: 'transparent',
+
+      primaryColor: '#161826',
+      primaryTextColor: '#e2e8f0',
+      primaryBorderColor: '#22d3ee',
+
+      secondaryColor: '#1a1230',
+      secondaryTextColor: '#c084fc',
+      secondaryBorderColor: '#a855f7',
+
+      tertiaryColor: '#1a1018',
+      tertiaryTextColor: '#fda4af',
+      tertiaryBorderColor: '#f43f5e',
+
+      lineColor: '#67e8f9',
+      mainBkg: '#11121a',
+      altBackground: '#161826',
+
+      noteBkgColor: 'rgba(168, 85, 247, 0.12)',
+      noteTextColor: '#f1f5f9',
+      noteBorderColor: '#a855f7',
+
+      actorBkg: '#161826',
+      actorBorder: '#22d3ee',
+      actorTextColor: '#e2e8f0',
+      actorLineColor: '#67e8f9',
+
+      labelBoxBkgColor: '#161826',
+      labelBoxBorderColor: '#22d3ee',
+      labelTextColor: '#e2e8f0',
+
+      signalColor: '#67e8f9',
+      signalTextColor: '#e2e8f0',
+
+      activationBkgColor: 'rgba(34, 211, 238, 0.18)',
+      activationBorderColor: '#22d3ee'
+    },
+    flowchart: { curve: 'basis', htmlLabels: true, useMaxWidth: true },
+    sequence: { mirrorActors: false, useMaxWidth: true },
+    journey: { useMaxWidth: true },
+    timeline: { useMaxWidth: true }
+  },
+
+  mermaidPlugin: {
+    class: 'mermaid nx-mermaid'
   }
-})
+}))

@@ -1,12 +1,12 @@
 ---
 title: TLS transport
-description: Carry one encrypted Nocturne packet over TLS 1.3 with optional mTLS. Composes with encrypt / decrypt — never replaces them.
+description: Carry one encrypted Nocturne packet over TLS 1.3 with optional mTLS. Composes with encrypt / decrypt; never replaces them.
 ---
 
 # TLS transport
 
 The `tls-send` / `tls-recv` subcommands carry one opaque encrypted
-packet over `TcpTlsTransport` — a sibling of `MemoryTransport`
+packet over `TcpTlsTransport`, a sibling of `MemoryTransport`
 implemented on top of OpenSSL.
 
 TLS here is a *transport*, not the cryptography. The packet itself is
@@ -79,7 +79,7 @@ mTLS client cert:
 | Auto retry        | `SSL_MODE_AUTO_RETRY` | No          |
 | Compression       | Disabled          | No              |
 
-The "no override" defaults are intentional — TLS-the-protocol has
+The "no override" defaults are intentional, TLS-the-protocol has
 been weakened often enough by knobs that we picked the conservative
 end of every dial.
 

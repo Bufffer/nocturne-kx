@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /* --------------------------------------------------------------------------
-   WireFormat — interactive visualisation of the Nocturne-KX v3 packet
+   WireFormat, interactive visualisation of the Nocturne-KX v3 packet
    layout. Hover a field to surface its description; click to deep-link
    into the architecture page. The byte ribbons are drawn from a
    declarative spec so adding a future version is a single data change.
@@ -28,7 +28,7 @@ const fields: Field[] = [
   { name: 'kem_ct',    size: '1568–1600 B', description: 'KEM ciphertext. Receiver decapsulates with sk; sender derives via encapsulate.', optional: true, group: 'kem' },
   { name: 'aad_len',   size: '4 B', description: 'Associated-data length (LE u32).', group: 'aead' },
   { name: 'ct_len',    size: '4 B', description: 'AEAD ciphertext length (LE u32).', group: 'aead' },
-  { name: 'aad',       size: 'aad_len',  description: 'Associated data — authenticated, not encrypted.', group: 'aead' },
+  { name: 'aad',       size: 'aad_len',  description: 'Associated data, authenticated, not encrypted.', group: 'aead' },
   { name: 'ct',        size: 'ct_len',   description: 'XChaCha20-Poly1305 ciphertext + 16 B Poly1305 tag.', group: 'aead' },
   { name: 'ed25519_sig', size: '64 B', description: 'Optional Ed25519 detached signature (HAS_SIG).', optional: true, group: 'sig' },
   { name: 'pqc_sig_type', size: '1 B', description: 'Optional PQ SigType byte (HAS_PQC_SIG).', optional: true, group: 'sig' },

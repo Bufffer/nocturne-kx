@@ -1,6 +1,6 @@
 ---
 title: gen-receiver
-description: Generate a Nocturne-KX receiver KEM keypair (X25519, hybrid, or pure ML-KEM-1024).
+description: Generate a Nocturne-KX receiver KEM keypair (X25519: hybrid, or pure ML-KEM-1024).
 ---
 
 # `gen-receiver`
@@ -30,7 +30,7 @@ nocturne-kx gen-receiver <outdir> [--kem x25519|hybrid|mlkem]
 | `hybrid`      | `receiver_hybrid_pk.bin`, `receiver_hybrid_sk.bin`     | 1600 B / 3200 B     |
 | `mlkem`       | `receiver_mlkem_pk.bin`, `receiver_mlkem_sk.bin`       | 1568 B / 3168 B     |
 
-All files are raw bytes — no PEM, no length prefix. The CLI verifies
+All files are raw bytes, no PEM, no length prefix. The CLI verifies
 sizes on read.
 
 ## Examples
@@ -52,7 +52,7 @@ nocturne-kx gen-receiver ./keys --kem mlkem
   filesystem honours them. `security-check` reports world-readable
   permissions as a warning.
 - For production, generate the keypair on the eventual receiver box
-  and never transfer the secret key — or generate inside an HSM and
+  and never transfer the secret key, or generate inside an HSM and
   export only the public key.
 - The `NCHSM2` format wraps a secret key under an Argon2id-derived
   AEAD; pass the passphrase via `NOCTURNE_HSM_PASSPHRASE` to use it.

@@ -1,6 +1,6 @@
 ---
 title: KEM modes
-description: X25519, hybrid X25519+ML-KEM-1024, pure ML-KEM-1024 — wire IDs, sizes, and how to pick.
+description: X25519: hybrid X25519+ML-KEM-1024, pure ML-KEM-1024, wire IDs, sizes, and how to pick.
 ---
 
 # KEM modes
@@ -64,7 +64,7 @@ signalled break, not a silent one.
 | Encapsulated ciphertext| 32 B      | 1600 B | 1568 B      |
 | Shared secret (combined) | 32 B    | 32 B   | 32 B        |
 
-The 32 B combined-secret size is constant — every mode keys the same
+The 32 B combined-secret size is constant, every mode keys the same
 XChaCha20-Poly1305 AEAD. Code downstream of the combiner is
 mode-agnostic.
 
@@ -78,7 +78,7 @@ Measured on an AMD Ryzen 5950X, single-threaded, Release build:
 | `encapsulate`              | ≈ 75 µs   | ≈ 140 µs | ≈ 95 µs   |
 | `decapsulate`              | ≈ 75 µs   | ≈ 140 µs | ≈ 95 µs   |
 
-Hybrid is roughly the sum of X25519 and ML-KEM-1024 — there's no
+Hybrid is roughly the sum of X25519 and ML-KEM-1024, there's no
 clever batching. Both halves run sequentially in the current
 implementation; that's a measurable optimisation we haven't taken
 because it would complicate the constant-time analysis.
@@ -92,4 +92,4 @@ because it would complicate the constant-time analysis.
 | `KemEncapsulateFailed` | libsodium / liboqs internal failure (extremely rare; usually a build issue). |
 | `KemDecapsulateFailed` | Ciphertext doesn't decapsulate against this secret key. Either a wrong key or active tampering. |
 
-All are typed `Error` values — no exceptions on the hot path.
+All are typed `Error` values, no exceptions on the hot path.

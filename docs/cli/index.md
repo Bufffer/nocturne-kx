@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: Every Nocturne-KX subcommand, flag, and exit code. Stable across the 4.x line.
+description: Every Nocturne-KX subcommand: flag, and exit code. Stable across the 4.x line.
 ---
 
 # CLI reference
@@ -77,7 +77,7 @@ The "replay" string in `stderr` is grep-stable for CI assertions. The
 ## Stability promise
 
 - Subcommand names: stable across the 4.x line.
-- Flag names: additive — new flags may appear; existing flags don't
+- Flag names: additive, new flags may appear; existing flags don't
   change meaning.
 - Wire format: governed by the packet `ver` byte, not the CLI version.
 - Error codes (`src/core/error.hpp` integer values): never renumbered;

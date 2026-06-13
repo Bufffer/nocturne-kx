@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: How Nocturne-KX is organised — module map, packet flow, HSM hierarchy, replay database, and the strict libsodium boundary.
+description: How Nocturne-KX is organised: module map, packet flow, HSM hierarchy, replay database, and the strict libsodium boundary.
 ---
 
 # Architecture
@@ -15,34 +15,34 @@ and the policy layer can be exercised independently.
 
 ```mermaid
 flowchart TB
-  subgraph CLI["CLI — nocturne-kx.cpp"]
+  subgraph CLI["CLI, nocturne-kx.cpp"]
     A1[gen-receiver / gen-signer]
     A2[encrypt / decrypt]
     A3[tls-send / tls-recv]
     A4[audit-verify / self-test]
   end
 
-  subgraph Protocol["Protocol — src/protocol/"]
+  subgraph Protocol["Protocol, src/protocol/"]
     B1[messaging.cpp<br/>encrypt_packet · decrypt_packet]
     B2[packet.cpp<br/>serialize · deserialize]
     B3[kdf.hpp · aead.hpp · signing.hpp]
   end
 
-  subgraph PQC["PQC — src/pqc/"]
+  subgraph PQC["PQC, src/pqc/"]
     C1[KEMFactory<br/>X25519 / HybridKEM / ML-KEM-1024]
     C2[SignatureFactory<br/>Ed25519 / HybridSig / ML-DSA-87]
   end
 
-  subgraph Security["Security — src/security/"]
+  subgraph Security["Security, src/security/"]
     D1[ReplayDB<br/>MAC-protected, atomic]
     D2[AuditLogger<br/>BLAKE2b chain + Ed25519]
     D3[RateLimiter]
     D4[KeyRotationManager]
   end
 
-  subgraph HSM["HSM — src/hsm/"]
-    E1[FileHSM — dev only]
-    E2[PKCS11HSM — production]
+  subgraph HSM["HSM, src/hsm/"]
+    E1[FileHSM, dev only]
+    E2[PKCS11HSM, production]
   end
 
   subgraph Sodium["libsodium + liboqs"]
@@ -69,7 +69,7 @@ touches global state.
 | Path                                 | Role                                                                              |
 |--------------------------------------|-----------------------------------------------------------------------------------|
 | `nocturne-kx.cpp`                    | CLI dispatch; inline `FileHSM` + `PKCS11HSM` adapters; `encrypt`/`decrypt` flow.   |
-| `src/core/result.hpp` · `error.hpp`  | `Result&lt;T&gt;` + typed `ErrorCode` — wire/SIEM contract; numbers are stable.          |
+| `src/core/result.hpp` · `error.hpp`  | `Result&lt;T&gt;` + typed `ErrorCode`, wire/SIEM contract; numbers are stable.          |
 | `src/core/byte_span.hpp`             | `BytesView` / `MutableBytesView` (ptr+size collapsed via P6.3).                   |
 | `src/protocol/packet.{hpp,cpp}`      | v3 wire format. Compile-time sanity checks via `static_assert`.                   |
 | `src/protocol/messaging.{hpp,cpp}`   | `encrypt_packet`, `decrypt_packet`, `*_kem` siblings. Single point of policy.     |
@@ -82,13 +82,13 @@ touches global state.
 | `src/security/audit_logger.hpp`      | Enterprise audit logger; chain head reproducible via `verify_chain()`.            |
 | `src/security/key_rotation.hpp`      | Dual-control rotation manager; calls `HSMInterface::generate_key`.                |
 | `src/security/siem_connector.hpp`    | Syslog/CEF/LEEF formatters + UDP/TCP/TLS sinks.                                   |
-| `src/transport.hpp`                  | Frame protocol — `NEGOTIATE/DATA/ACK/NAK/CLOSE` + `MemoryTransport`.               |
+| `src/transport.hpp`                  | Frame protocol, `NEGOTIATE/DATA/ACK/NAK/CLOSE` + `MemoryTransport`.               |
 | `src/tcp_tls_transport.hpp`          | OpenSSL TLS 1.3 sibling to `MemoryTransport`; optional mTLS.                       |
 | `src/handshake.hpp`                  | SIGMA 3-message handshake; Ed25519 ID + X25519 ephemeral; `TrustStore`.            |
 | `src/double_ratchet.hpp`             | Signal-style DR (DH ratchet, chains, skipped keys cap=128, MAX_GAP=10000).         |
 | `src/core/side_channel.{hpp,cpp}`    | `secure_zero_memory`, branchless `ct_select`, 100-500µs random delay, `clflush`.   |
 
-## Packet flow — hybrid PQC mode
+## Packet flow, hybrid PQC mode
 
 ```mermaid
 sequenceDiagram
@@ -107,14 +107,14 @@ sequenceDiagram
   A-->>S: ciphertext + 16 B tag
   S->>SIG: sign(canonical_bytes, sk)
   SIG-->>S: signature bytes
-  S->>N: serialise(packet) — v3 wire format
+  S->>N: serialise(packet), v3 wire format
 
   Note over S,N: All steps return Result<T>;<br/>any failure is a typed Error<br/>(no exceptions on the hot path)
 ```
 
 The receiver runs the dual in reverse: `deserialize` first, then `peek`
 at the flags byte to pick the KEM mode, then `decapsulate` + `decrypt` +
-`verify` — each step short-circuiting on the first typed error.
+`verify`, each step short-circuiting on the first typed error.
 
 ## Replay database
 
@@ -138,7 +138,7 @@ There are **two** `HSMInterface` types and that's not an accident:
   The CLI talks to this. Only the methods the CLI needs:
   `sign`, `get_public_key`, `has_key`, `generate_random`, `is_healthy`.
 - **Enterprise `nocturne::hsm::HSMInterface`** (in `src/hsm/`).
-  The full surface — `generate_key`, `rotate_key`, `delete_key`,
+  The full surface, `generate_key`, `rotate_key`, `delete_key`,
   `get_audit_trail`, key policy, FIPS reporting.
 
 The inline `PKCS11HSM` adapter is a thin shim that forwards to the
@@ -147,7 +147,7 @@ enterprise one via env vars (`PKCS11_LIB`, `NOCTURNE_HSM_PIN`,
 HSM policy.
 
 After P7.1 the enterprise `nocturne::hsm::PKCS11HSM` is validated in
-CI against SoftHSM2 — see `.github/workflows/cmake.yml` step
+CI against SoftHSM2, see `.github/workflows/cmake.yml` step
 "SoftHSM PKCS#11 integration".
 
 ## Threading
@@ -155,7 +155,7 @@ CI against SoftHSM2 — see `.github/workflows/cmake.yml` step
 - `KEMInterface` and `SignatureScheme` are stateless and thread-safe.
 - `FileHSM` and `PKCS11HSM` both use a `mutable std::mutex` to serialise
   state mutations; concurrent `sign()` is safe.
-- `ReplayDB` is **not** thread-safe internally — single-writer is
+- `ReplayDB` is **not** thread-safe internally, single-writer is
   enforced at the policy layer. Use one `ReplayDB` per process.
 - `AuditLogger` is single-writer; multi-writer mode is not supported
   (the chain head is global state).
@@ -177,4 +177,4 @@ In practice that means:
 - Memory: `sodium_memzero`, `sodium_memcmp`, `sodium_mlock`
 
 If a code review ever surfaces a hand-rolled cipher, hash, or constant-time
-comparison in `src/`, treat it as a bug — open an issue.
+comparison in `src/`, treat it as a bug, open an issue.
