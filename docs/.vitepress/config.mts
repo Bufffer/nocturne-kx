@@ -16,12 +16,6 @@ export default defineConfig({
   lastUpdated: true,
   appearance: 'dark',
 
-  // Legacy OPERATIONS.md / SECURITY.md at docs/ root predate this site
-  // and reference USER_GUIDE / API_REFERENCE / TROUBLESHOOTING files
-  // that don't yet exist. Phase B will fold their content into the
-  // proper guide/ structure; for now don't fail the build on them.
-  ignoreDeadLinks: true,
-
   head: [
     ['meta', { name: 'theme-color', content: '#0a0a0f' }],
     ['meta', { property: 'og:type', content: 'website' }],
@@ -47,6 +41,7 @@ export default defineConfig({
       { text: 'Architecture', link: '/architecture' },
       { text: 'CLI', link: '/cli/' },
       { text: 'PQC', link: '/pqc/' },
+      { text: 'API', link: '/api' },
       {
         text: 'v4.0',
         items: [

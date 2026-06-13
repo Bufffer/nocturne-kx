@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'src/**'
+      - 'nocturne-kx.cpp'
+      - 'Doxyfile'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -23,9 +26,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: docs
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,21 +37,35 @@ jobs:
           cache: 'npm'
           cache-dependency-path: docs/package.json
 
-      - name: Install dependencies
+      # ---- Doxygen API reference ------------------------------------------
+      - name: Install Doxygen + Graphviz
+        run: sudo apt-get install -y doxygen graphviz
+
+      - name: Clone doxygen-awesome-css
+        run: git clone --depth 1 https://github.com/jothepro/doxygen-awesome-css.git /tmp/doxygen-awesome
+
+      - name: Generate C++ API reference
+        run: |
+          mkdir -p /tmp/doxygen-out
+          doxygen Doxyfile
+          mkdir -p docs/public/doxygen
+          cp -r /tmp/doxygen-out/html/. docs/public/doxygen/
+
+      # ---- VitePress site -------------------------------------------------
+      - name: Install Node dependencies
+        working-directory: docs
         run: npm install --no-package-lock
 
       - name: Build VitePress site
+        working-directory: docs
         env:
           DOCS_BASE: /nocturne-kx/
         run: npm run docs:build
 
+      # ---- GitHub Pages ---------------------------------------------------
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
-          # Auto-enable Pages on the repo the first time this workflow
-          # runs. Without this, the maintainer would have to flip
-          # "Pages → Source: GitHub Actions" by hand before the deploy
-          # step can resolve the gh-pages target.
           enablement: true
 
       - uses: actions/upload-pages-artifact@v3
@@ -67,3 +81,20 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  lighthouse:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lighthouse audit
+        uses: treosh/lighthouse-ci-action@v11
+        with:
+          urls: |
+            https://bufffer.github.io/nocturne-kx/
+            https://bufffer.github.io/nocturne-kx/guide/quickstart
+            https://bufffer.github.io/nocturne-kx/architecture
+          budgetPath: .github/lighthouse-budget.json
+          uploadArtifacts: true
+          temporaryPublicStorage: true
