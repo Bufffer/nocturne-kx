@@ -104,6 +104,21 @@ jobs:
       run: |
         ./nocturne-tests "[pqc-sig]"
 
+    # SoftHSM2 integration: drives nocturne::hsm::PKCS11HSM against the
+    # libsofthsm2.so token initialised above. Proves the PKCS#11 path —
+    # CKM_EC_EDWARDS_KEY_PAIR_GEN keygen, CKM_EDDSA sign, slot-by-label
+    # lookup, PIN auth flow, session pool — actually works end-to-end,
+    # not just compiles. Without this step the [hsm] suite only exercises
+    # FileHSM, so a regression in the PKCS#11 wiring would land silently.
+    - name: SoftHSM PKCS#11 integration (must pass)
+      working-directory: ${{github.workspace}}/build
+      env:
+        SOFTHSM2_CONF: ${{github.workspace}}/.softhsm/softhsm2.conf
+        NOCTURNE_HSM_TOKEN: nocturne-test
+        NOCTURNE_HSM_PIN: "1234"
+      run: |
+        ./nocturne-tests "[softhsm]"
+
   build-debug:
     runs-on: ubuntu-latest
     strategy:

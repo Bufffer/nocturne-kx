@@ -530,6 +530,7 @@ TEST_CASE("PQC roundtrip with Ed25519 signer", "[e2e][pqc]") {
 
 // Local include — the hsm headers live outside the nocturne-kx.cpp graph.
 #include "../src/hsm/file_hsm.hpp"
+#include "../src/hsm/pkcs11_hsm.hpp"
 #include "../src/security/key_rotation.hpp"
 
 TEST_CASE("FileHSM generate_key drives KeyRotationManager", "[hsm]") {
@@ -600,6 +601,82 @@ TEST_CASE("FileHSM generate_key drives KeyRotationManager", "[hsm]") {
     }
 
     fs::remove_all(base);
+}
+
+// SoftHSM2 integration: drives the production nocturne::hsm::PKCS11HSM
+// against a real PKCS#11 v3.0+ token. Activated only when the
+// PKCS11_LIB env var points at a loadable provider (libsofthsm2.so in
+// CI). Local dev runs without it skip cleanly so this suite stays
+// portable to Windows / non-PKCS#11 boxes.
+//
+// CI prerequisite (cmake.yml "SoftHSM init" step):
+//   softhsm2-util --init-token --slot 0 --label "nocturne-test"
+//                 --so-pin 0000 --pin 1234
+TEST_CASE("PKCS11HSM round-trips against SoftHSM2", "[softhsm]") {
+    nocturne::check_sodium();
+
+    const char* lib = std::getenv("PKCS11_LIB");
+    if (!lib || lib[0] == '\0') {
+        SKIP("PKCS11_LIB env var not set — skipping SoftHSM integration test");
+    }
+
+    const char* token_env = std::getenv("NOCTURNE_HSM_TOKEN");
+    const std::string token_label = token_env && token_env[0] ? token_env
+                                                              : "nocturne-test";
+    const char* pin_env = std::getenv("NOCTURNE_HSM_PIN");
+    const std::string pin_value = pin_env && pin_env[0] ? pin_env : "1234";
+
+    // require_fips=false: SoftHSM2 isn't FIPS-certified. The check would
+    // otherwise reject the slot up front. Production PKCS#11 deployments
+    // keep the default require_fips=true.
+    nocturne::hsm::PKCS11HSM hsm(lib, token_label, "nocturne-it-key", false);
+    REQUIRE(hsm.is_healthy());
+
+    std::string pin = pin_value;
+    REQUIRE(hsm.authenticate(pin));
+
+    SECTION("generate_random produces fresh entropy") {
+        auto r1 = hsm.generate_random(32);
+        auto r2 = hsm.generate_random(32);
+        REQUIRE(r1.size() == 32);
+        REQUIRE(r2.size() == 32);
+        REQUIRE(r1 != r2);
+    }
+
+    SECTION("generate_key + sign verifies against returned pk") {
+        nocturne::hsm::KeyPolicy policy;
+        policy.sensitive   = true;
+        policy.extractable = false;
+
+        auto md = hsm.generate_key("nocturne-it-key", "Ed25519", policy);
+        REQUIRE(md.label == "nocturne-it-key");
+        REQUIRE(md.algorithm == "Ed25519");
+
+        auto pk_opt = hsm.get_public_key();
+        REQUIRE(pk_opt.has_value());
+        REQUIRE(pk_opt->size() == crypto_sign_PUBLICKEYBYTES);
+
+        const std::string msg = "softhsm integration smoke";
+        auto sig = hsm.sign(
+            {reinterpret_cast<const uint8_t*>(msg.data()), msg.size()});
+
+        // The signature the HSM produced must verify against the public
+        // key it just reported. If this fails, generate_key wired the
+        // wrong handle into the key cache.
+        REQUIRE(crypto_sign_verify_detached(
+                    sig.data(),
+                    reinterpret_cast<const uint8_t*>(msg.data()),
+                    msg.size(),
+                    pk_opt->data()) == 0);
+
+        // verify() against tampered bytes must reject — the HSM-side
+        // EdDSA mechanism is wired the same way the verifier expects.
+        std::string bad = msg;
+        bad[0] ^= 0x01;
+        REQUIRE_FALSE(hsm.verify(
+            {reinterpret_cast<const uint8_t*>(bad.data()), bad.size()},
+            {sig.data(), sig.size()}));
+    }
 }
 
 TEST_CASE("Audit log verify_chain", "[audit]") {
