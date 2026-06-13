@@ -32,7 +32,7 @@ enum class KEMType : uint8_t {
 /**
  * @brief Convert KEM type to string
  */
-inline const char* kem_type_to_string(KEMType type) {
+[[nodiscard]] inline const char* kem_type_to_string(KEMType type) {
     switch (type) {
         case KEMType::CLASSIC_X25519: return "X25519";
         case KEMType::HYBRID_X25519_MLKEM1024: return "Hybrid-X25519-ML-KEM-1024";
@@ -128,7 +128,7 @@ public:
      * @return KEMKeyPair with freshly generated keys
      * @throws std::runtime_error if key generation fails
      */
-    virtual KEMKeyPair generate_keypair() = 0;
+    [[nodiscard]] virtual KEMKeyPair generate_keypair() = 0;
 
     /**
      * @brief Encapsulate a shared secret (sender side)
@@ -141,7 +141,7 @@ public:
      * @throws std::invalid_argument if public_key is malformed
      * @throws std::runtime_error if encapsulation fails
      */
-    virtual std::pair<KEMCiphertext, KEMSharedSecret>
+    [[nodiscard]] virtual std::pair<KEMCiphertext, KEMSharedSecret>
         encapsulate(const std::vector<uint8_t>& public_key) = 0;
 
     /**
@@ -156,34 +156,34 @@ public:
      * @throws std::invalid_argument if inputs are malformed
      * @throws std::runtime_error if decapsulation fails (wrong key, corrupted ct)
      */
-    virtual KEMSharedSecret decapsulate(
+    [[nodiscard]] virtual KEMSharedSecret decapsulate(
         const KEMCiphertext& ciphertext,
         const std::vector<uint8_t>& secret_key) = 0;
 
     /**
      * @brief Get the KEM type
      */
-    virtual KEMType get_type() const = 0;
+    [[nodiscard]] virtual KEMType get_type() const = 0;
 
     /**
      * @brief Get public key size in bytes
      */
-    virtual size_t public_key_size() const = 0;
+    [[nodiscard]] virtual size_t public_key_size() const = 0;
 
     /**
      * @brief Get secret key size in bytes
      */
-    virtual size_t secret_key_size() const = 0;
+    [[nodiscard]] virtual size_t secret_key_size() const = 0;
 
     /**
      * @brief Get ciphertext size in bytes
      */
-    virtual size_t ciphertext_size() const = 0;
+    [[nodiscard]] virtual size_t ciphertext_size() const = 0;
 
     /**
      * @brief Get algorithm name (human-readable)
      */
-    virtual std::string algorithm_name() const = 0;
+    [[nodiscard]] virtual std::string algorithm_name() const = 0;
 };
 
 /**

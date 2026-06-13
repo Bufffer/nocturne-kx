@@ -62,13 +62,13 @@ struct Frame {
 // Simple serializer (network order = LE here for consistency with rest of project)
 inline void write_u32(Bytes& out, uint32_t v){ out.push_back((uint8_t)(v&0xFF)); out.push_back((uint8_t)((v>>8)&0xFF)); out.push_back((uint8_t)((v>>16)&0xFF)); out.push_back((uint8_t)((v>>24)&0xFF)); }
 inline void write_u64(Bytes& out, uint64_t v){ for(int i=0;i<8;i++) out.push_back((uint8_t)((v>>(8*i))&0xFF)); }
-inline uint32_t read_u32(const uint8_t* p){ return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24); }
-inline uint64_t read_u64(const uint8_t* p){ uint64_t v=0; for(int i=0;i<8;i++) v |= (uint64_t)p[i] << (8*i); return v; }
+[[nodiscard]] inline uint32_t read_u32(const uint8_t* p){ return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24); }
+[[nodiscard]] inline uint64_t read_u64(const uint8_t* p){ uint64_t v=0; for(int i=0;i<8;i++) v |= (uint64_t)p[i] << (8*i); return v; }
 
-inline Bytes serialize_features(const FeatureSet& f){ Bytes b; b.reserve(4); b.push_back((uint8_t)(f.version & 0xFF)); b.push_back((uint8_t)((f.version>>8)&0xFF)); b.push_back((uint8_t)f.supports_ratchet); b.push_back((uint8_t)f.supports_signatures); return b; }
-inline FeatureSet parse_features(const Bytes& b){ if (b.size()!=4) throw std::runtime_error("feat size"); FeatureSet f{}; f.version = (uint16_t)(b[0] | (b[1]<<8)); f.supports_ratchet = b[2]!=0; f.supports_signatures = b[3]!=0; return f; }
+[[nodiscard]] inline Bytes serialize_features(const FeatureSet& f){ Bytes b; b.reserve(4); b.push_back((uint8_t)(f.version & 0xFF)); b.push_back((uint8_t)((f.version>>8)&0xFF)); b.push_back((uint8_t)f.supports_ratchet); b.push_back((uint8_t)f.supports_signatures); return b; }
+[[nodiscard]] inline FeatureSet parse_features(const Bytes& b){ if (b.size()!=4) throw std::runtime_error("feat size"); FeatureSet f{}; f.version = (uint16_t)(b[0] | (b[1]<<8)); f.supports_ratchet = b[2]!=0; f.supports_signatures = b[3]!=0; return f; }
 
-inline Bytes serialize_frame(const Frame& f) {
+[[nodiscard]] inline Bytes serialize_frame(const Frame& f) {
     Bytes out; out.reserve(32);
     out.push_back(f.header.type); out.push_back(f.header.flags);
     write_u32(out, f.header.session_id); write_u64(out, f.header.seq);
@@ -94,7 +94,7 @@ inline Bytes serialize_frame(const Frame& f) {
     return out;
 }
 
-inline Frame parse_frame(const Bytes& b) {
+[[nodiscard]] inline Frame parse_frame(const Bytes& b) {
     if (b.size() < 1+1+4+8) throw std::runtime_error("frame too short");
     Frame f{}; size_t off=0; f.header.type=b[off++]; f.header.flags=b[off++]; f.header.session_id=read_u32(&b[off]); off+=4; f.header.seq=read_u64(&b[off]); off+=8;
     auto need=[&](size_t n){ if (off+n>b.size()) throw std::runtime_error("frame truncated"); };

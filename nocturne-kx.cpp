@@ -989,7 +989,7 @@ int main(int argc, char** argv) {
             std::array<uint8_t, 32> random_bytes{};
             randombytes_buf(random_bytes.data(), random_bytes.size());
             bool has_entropy = false;
-            for (auto b : random_bytes) if (b != 0) { has_entropy = true; break; }
+            for (const auto b : random_bytes) if (b != 0) { has_entropy = true; break; }
             if (has_entropy) {
                 std::cout << "    ✓ Secure random number generation\n";
             } else {
@@ -1005,7 +1005,7 @@ int main(int argc, char** argv) {
             
             for (const auto& key_file : key_files) {
                 if (std::filesystem::exists(key_file)) {
-                    auto perms = std::filesystem::status(key_file).permissions();
+                    const auto perms = std::filesystem::status(key_file).permissions();
                     if ((perms & std::filesystem::perms::others_read) == std::filesystem::perms::none &&
                         (perms & std::filesystem::perms::group_read) == std::filesystem::perms::none) {
                         std::cout << "    ✓ " << key_file << " has secure permissions\n";

@@ -57,13 +57,13 @@ private:
     std::filesystem::path path_;
     std::unordered_map<std::string, std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> store_;
 
-    static std::string to_hex(const uint8_t* p, size_t n) {
+    [[nodiscard]] static std::string to_hex(const uint8_t* p, size_t n) {
         static const char* hex = "0123456789abcdef";
         std::string s; s.reserve(n*2);
         for (size_t i=0;i<n;i++){ s.push_back(hex[p[i]>>4]); s.push_back(hex[p[i]&0xF]); }
         return s;
     }
-    static bool from_hex(const std::string& s, uint8_t* out, size_t n) {
+    [[nodiscard]] static bool from_hex(const std::string& s, uint8_t* out, size_t n) {
         if (s.size() != n*2) return false;
         auto val = [](char c)->int{
             if (c>='0'&&c<='9') return c-'0';

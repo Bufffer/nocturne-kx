@@ -39,7 +39,7 @@
 struct HSMInterface {
     /// @brief Sign @p data with this HSM's Ed25519 key.
     /// @return 64-byte detached signature.
-    virtual std::array<std::uint8_t, crypto_sign_BYTES>
+    [[nodiscard]] virtual std::array<std::uint8_t, crypto_sign_BYTES>
         sign(nocturne::BytesView data) = 0;
 
     /// @brief Fetch the HSM's Ed25519 public key. nullopt if unavailable.

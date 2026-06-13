@@ -33,7 +33,7 @@ enum class SigType : uint8_t {
     PURE_MLDSA87           = 2,  ///< NIST FIPS 204 Level 5 (pure post-quantum)
 };
 
-inline const char* sig_type_to_string(SigType t) {
+[[nodiscard]] inline const char* sig_type_to_string(SigType t) {
     switch (t) {
         case SigType::CLASSIC_ED25519:        return "Ed25519";
         case SigType::HYBRID_ED25519_MLDSA87: return "Hybrid-Ed25519-ML-DSA-87";
@@ -82,23 +82,23 @@ class SignatureScheme {
 public:
     virtual ~SignatureScheme() = default;
 
-    virtual SigKeyPair  generate_keypair() = 0;
+    [[nodiscard]] virtual SigKeyPair  generate_keypair() = 0;
 
     /// @param message View over the bytes under signature (P6.3: span
     ///        instead of ptr+len — size is bound at construction and
     ///        cannot disagree with the pointer downstream).
-    virtual Signature   sign(BytesView message,
+    [[nodiscard]] virtual Signature   sign(BytesView message,
                              const std::vector<uint8_t>& secret_key) = 0;
 
-    virtual bool        verify(BytesView message,
+    [[nodiscard]] virtual bool        verify(BytesView message,
                                const Signature& signature,
                                const std::vector<uint8_t>& public_key) = 0;
 
-    virtual SigType     get_type()         const = 0;
-    virtual size_t      public_key_size()  const = 0;
-    virtual size_t      secret_key_size()  const = 0;
-    virtual size_t      signature_size()   const = 0;
-    virtual std::string algorithm_name()   const = 0;
+    [[nodiscard]] virtual SigType     get_type()         const = 0;
+    [[nodiscard]] virtual size_t      public_key_size()  const = 0;
+    [[nodiscard]] virtual size_t      secret_key_size()  const = 0;
+    [[nodiscard]] virtual size_t      signature_size()   const = 0;
+    [[nodiscard]] virtual std::string algorithm_name()   const = 0;
 };
 
 } // namespace pqc

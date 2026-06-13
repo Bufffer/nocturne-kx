@@ -120,7 +120,7 @@ public:
      * @return 64-byte Ed25519 signature
      * @throws HSMError if signing fails
      */
-    virtual std::array<uint8_t, crypto_sign_BYTES> sign(BytesView data) = 0;
+    [[nodiscard]] virtual std::array<uint8_t, crypto_sign_BYTES> sign(BytesView data) = 0;
 
     /**
      * @brief Verify Ed25519 signature
@@ -128,7 +128,7 @@ public:
      * @param signature Detached signature (must be 64 bytes)
      * @return true if valid, false otherwise
      */
-    virtual bool verify(BytesView data, BytesView signature) = 0;
+    [[nodiscard]] virtual bool verify(BytesView data, BytesView signature) = 0;
 
     /**
      * @brief Encrypt data using authenticated encryption (AEAD)
@@ -138,7 +138,7 @@ public:
      * @param ct_len Output ciphertext length
      * @return true on success
      */
-    virtual bool encrypt(
+    [[nodiscard]] virtual bool encrypt(
         BytesView plaintext,
         BytesView aad,
         MutableBytesView ciphertext,
@@ -157,7 +157,7 @@ public:
      * @param pt_len Output plaintext length
      * @return true on success, false if authentication fails
      */
-    virtual bool decrypt(
+    [[nodiscard]] virtual bool decrypt(
         BytesView ciphertext,
         BytesView aad,
         MutableBytesView plaintext,
@@ -210,21 +210,21 @@ public:
      * @brief Get public key for signing/verification
      * @return 32-byte Ed25519 public key (optional if not available)
      */
-    virtual std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() = 0;
+    [[nodiscard]] virtual std::optional<std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>> get_public_key() = 0;
 
     /**
      * @brief Check if key exists
      * @param label Key label
      * @return true if key exists
      */
-    virtual bool has_key(const std::string& label) = 0;
+    [[nodiscard]] virtual bool has_key(const std::string& label) = 0;
 
     /**
      * @brief Delete key (if policy allows)
      * @param label Key label
      * @return true on success
      */
-    virtual bool delete_key(const std::string& label) {
+    [[nodiscard]] virtual bool delete_key(const std::string& label) {
         (void)label;
         return false; // Default: not allowed
     }
@@ -233,7 +233,7 @@ public:
      * @brief List all keys
      * @return Vector of key metadata
      */
-    virtual std::vector<KeyMetadata> list_keys() {
+    [[nodiscard]] virtual std::vector<KeyMetadata> list_keys() {
         return {}; // Default: empty
     }
 
@@ -276,7 +276,7 @@ public:
      * @param length Number of bytes to generate
      * @return Random bytes
      */
-    virtual std::vector<uint8_t> generate_random(size_t length) = 0;
+    [[nodiscard]] virtual std::vector<uint8_t> generate_random(size_t length) = 0;
 
     // ==================== Health & Monitoring ====================
 
@@ -284,13 +284,13 @@ public:
      * @brief Check HSM health status
      * @return true if HSM is healthy and operational
      */
-    virtual bool is_healthy() = 0;
+    [[nodiscard]] virtual bool is_healthy() = 0;
 
     /**
      * @brief Get detailed HSM status
      * @return Status information
      */
-    virtual HSMStatus get_status() const {
+    [[nodiscard]] virtual HSMStatus get_status() const {
         HSMStatus status;
         status.initialized = false;
         return status;
@@ -302,7 +302,7 @@ public:
      * @param end End time (optional)
      * @return Vector of audit records
      */
-    virtual std::vector<AuditRecord> get_audit_trail(
+    [[nodiscard]] virtual std::vector<AuditRecord> get_audit_trail(
         std::optional<std::chrono::system_clock::time_point> start = std::nullopt,
         std::optional<std::chrono::system_clock::time_point> end = std::nullopt
     ) const {
@@ -317,7 +317,7 @@ public:
      * @param pin PIN/passphrase (will be zeroed after use)
      * @return true on success
      */
-    virtual bool authenticate(std::string& pin) {
+    [[nodiscard]] virtual bool authenticate(std::string& pin) {
         (void)pin;
         return true; // Default: no authentication required
     }
