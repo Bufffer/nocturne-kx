@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="nx-g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+  <!-- Crescent moon — Nocturne -->
+  <path d="M44 44a20 20 0 1 1 0-24 16 16 0 0 0 0 24Z" fill="url(#nx-g)"/>
+  <!-- KX glyph (rotated) -->
+  <path d="M28 28l8 8M36 28l-8 8" stroke="#0a0a0f" stroke-width="3" stroke-linecap="round"/>
+</svg>
