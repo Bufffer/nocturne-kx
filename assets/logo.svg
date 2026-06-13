@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 150">
+  <defs>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="1.5" cy="1.5" r="1" fill="rgba(92,151,255,0.08)"/>
+    </pattern>
+    <filter id="c" x="-10%" y="-40%" width="120%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="b" x="-10%" y="-40%" width="120%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="560" height="150" rx="18" fill="#0B0E16"/>
+  <rect width="560" height="150" rx="18" fill="url(#grid)"/>
+  <!-- glow passes -->
+  <text x="280" y="98" text-anchor="middle"
+        font-family="'JetBrains Mono',Menlo,'Courier New',monospace"
+        font-weight="800" font-size="66" letter-spacing="-1" opacity="0">
+    <tspan fill="#EAF0FB">Noc</tspan><tspan fill="#35DDF5" filter="url(#c)">&lt;T&gt;</tspan><tspan fill="#5C97FF" filter="url(#b)">::</tspan><tspan fill="#EAF0FB">KX</tspan>
+  </text>
+  <!-- main text -->
+  <text x="280" y="98" text-anchor="middle"
+        font-family="'JetBrains Mono',Menlo,'Courier New',monospace"
+        font-weight="800" font-size="66" letter-spacing="-1">
+    <tspan fill="#EAF0FB">Noc</tspan><tspan fill="#35DDF5">&lt;T&gt;</tspan><tspan fill="#5C97FF">::</tspan><tspan fill="#EAF0FB">KX</tspan>
+  </text>
+</svg>

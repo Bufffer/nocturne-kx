@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 152 30">
+  <text x="0" y="22"
+        font-family="'JetBrains Mono',Menlo,'Courier New',monospace"
+        font-weight="800" font-size="21" letter-spacing="-0.4">
+    <tspan fill="#0B0E16">Noc</tspan><tspan fill="#0E9FB8">&lt;T&gt;</tspan><tspan fill="#2F6BFF">::</tspan><tspan fill="#0B0E16">KX</tspan>
+  </text>
+</svg>

@@ -25,16 +25,23 @@ export default defineConfig({
       {
         property: 'og:description',
         content:
-          'Patent-pending hybrid PQC KEM, bidirectional replay protection, PKCS#11 HSM. C++23, single binary.'
+          'Hybrid PQC KEM, bidirectional replay protection, PKCS#11 HSM. C++23, single binary.'
       }
     ],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/nocturne-kx/favicon.svg' }],
     ['link', { rel: 'preconnect', href: 'https://rsms.me/' }],
     ['link', { rel: 'stylesheet', href: 'https://rsms.me/inter/inter.css' }]
   ],
 
   themeConfig: {
-    siteTitle: 'Nocturne-KX',
-    logo: { src: '/logo.svg', width: 24, height: 24 },
+    siteTitle: false,
+    logo: {
+      light: '/logo-light.svg',
+      dark:  '/logo-dark.svg',
+      alt:   'Noc<T>::KX',
+      width: 152,
+      height: 30,
+    },
 
     nav: [
       { text: 'Guide', link: '/guide/quickstart', activeMatch: '/guide/' },

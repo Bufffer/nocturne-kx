@@ -1,4 +1,8 @@
-# Nocturne-KX
+<div align="center">
+  <img src="assets/logo.svg" alt="Noc&lt;T&gt;::KX" width="480">
+</div>
+
+<br>
 
 [![CI](https://github.com/Bufffer/nocturne-kx/actions/workflows/cmake.yml/badge.svg)](https://github.com/Bufffer/nocturne-kx/actions/workflows/cmake.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
