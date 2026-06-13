@@ -23,6 +23,33 @@ without sharing a single monotonic count.
 
 ## The defence in action
 
+```bash
+# First decrypt: counter advances to 1
+./build/nocturne-kx decrypt \
+  --rx-pk ./keys/receiver_hybrid_pk.bin \
+  --rx-sk ./keys/receiver_hybrid_sk.bin \
+  --replay-db ./replay.db \
+  --in msg.pkt --out plaintext
+# ok
+
+# Second decrypt of the same packet: rejected
+./build/nocturne-kx decrypt \
+  --rx-pk ./keys/receiver_hybrid_pk.bin \
+  --rx-sk ./keys/receiver_hybrid_sk.bin \
+  --replay-db ./replay.db \
+  --in msg.pkt --out /dev/null
+# ReplayDetected: counter 1 <= last seen 1 for session 7f3a
+# exit 2
+```
+
+The rejection happens before any decryption. The DB is read, the counter
+is compared, and the packet is dropped entirely if `counter <= last_seen`.
+No key material is loaded for a rejected packet.
+
+**Bidirectional separation in practice:** if Alice sends to Bob and Bob
+sends back to Alice, both counters are tracked independently under the
+same DB. An attacker cannot exhaust Bob's counter by replaying Alice's
+outbound packets.
 
 ## On-disk format
 
@@ -86,13 +113,23 @@ value is detected on the next read.
 
 ## CLI commands
 
-```bash
-# Inspect (no decrypt happens)
-nocturne-kx rate-limit-status alice@example.com
+The replay DB is updated automatically by `encrypt` and `decrypt`. There
+is no separate management command. To inspect a DB's state you can
+examine it indirectly:
 
-# Reset (auditable; requires --hsm-pass or operator policy)
-nocturne-kx rate-limit-reset alice@example.com
+```bash
+# Check that the DB is readable and AEAD-intact (self-test covers this)
+./build/nocturne-kx self-test
+
+# A failed decrypt with ReplayDetected means the DB counter is ahead of
+# the packet counter -- the packet has already been processed
+./build/nocturne-kx decrypt ... 2>&1 | grep -c ReplayDetected
 ```
+
+To reset state for a session (e.g. after a key rotation), delete the
+DB file and let it be recreated on the next encrypt/decrypt. This is
+safe only when all senders have also rotated keys so pre-rotation
+ciphertexts cannot be replayed against a clean DB.
 
 ## Failure mode
 

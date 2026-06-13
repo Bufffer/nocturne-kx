@@ -74,6 +74,39 @@ The "replay" string in `stderr` is grep-stable for CI assertions. The
 | `NOCTURNE_HSM_PASSPHRASE` | Passphrase for `NCHSM2` FileHSM secret keys.          |
 | `NOCTURNE_DISABLE_RANDOM_DELAY` | `1` → skip the 100-500 µs constant-time delay (testing only). |
 
+## Error code reference
+
+These are the typed `ErrorCode` values from `src/core/error.hpp`. The integer values are stable across the 4.x line and used by SIEM connectors.
+
+| Code | Name | Meaning |
+|------|------|---------|
+| 1 | `Unknown` | Unclassified error. |
+| 2 | `AeadEncryptFailed` | XChaCha20-Poly1305 encryption failed (libsodium returned non-zero). |
+| 3 | `AeadAuthFailed` | Poly1305 tag mismatch on decrypt -- tampered ciphertext or wrong key. |
+| 4 | `KemEncapFailed` | KEM encapsulation failed. |
+| 5 | `KemDecapFailed` | KEM decapsulation failed -- wrong secret key or corrupted ciphertext. |
+| 6 | `SignFailed` | Signing operation failed. |
+| 7 | `SignatureVerifyFailed` | Signature verification failed -- wrong signer key or tampered packet head. |
+| 8 | `ReplayDetected` | Replay database rejected the packet counter. |
+| 9 | `PacketFieldOversized` | A wire field exceeded its maximum size cap. |
+| 10 | `PacketVersionMismatch` | Packet `ver` byte does not match supported version. |
+| 11 | `KemTypeUnknown` | Unknown or unsupported KEM type byte in packet flags. |
+| 12 | `HsmError` | HSM operation failed (see stderr for PKCS#11 error detail). |
+| 13 | `IoError` | File read/write failed. |
+| 14 | `KeyDerivationFailed` | HKDF failed. |
+
+## Quick troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `AeadAuthFailed` | Wrong `--rx-sk` or packet tampered | Verify key pair matches; check packet integrity |
+| `ReplayDetected` | Packet already processed | Expected on replay; if unexpected, check sender retry logic |
+| `SignatureVerifyFailed` | Wrong `--expect-pqc-signer` key | Ensure sender's public key is current |
+| `KemDecapFailed` | Wrong `--rx-sk` for hybrid packet | Confirm secret key matches the receiver pk the sender encrypted to |
+| `PacketFieldOversized` | Corrupt or truncated packet | Re-receive the packet; check transport |
+| `HsmError` | Wrong PIN or library path | Check `PKCS11_LIB`, `NOCTURNE_HSM_PIN`, run `pkcs11-tool --test` |
+| `exit 1` (usage) | Missing required flag | Check `--help` output for the subcommand |
+
 ## Stability promise
 
 - Subcommand names: stable across the 4.x line.

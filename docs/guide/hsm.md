@@ -95,9 +95,19 @@ export PKCS11_LIB=/opt/cloudhsm/lib/libcloudhsm_pkcs11.so
 
 What the CLI actually does on the wire when you set `--sign-hsm-uri "hsm://..."`:
 
+1. `C_Initialize` -- load the library, start the Cryptoki subsystem.
+2. `C_GetSlotList` -- enumerate available slots; select the one whose `CK_TOKEN_INFO.label` matches the URI's token ID.
+3. `C_OpenSession(CKF_SERIAL_SESSION | CKF_RW_SESSION)` -- open a session on that slot.
+4. `C_Login(CKU_USER, pin)` -- authenticate with `NOCTURNE_HSM_PIN`.
+5. `C_FindObjectsInit` + `C_FindObjects` + `C_FindObjectsFinal` -- locate the key object by `CKA_LABEL`.
+6. `C_SignInit(CKM_EDDSA, key_handle)` -- prepare the session for Ed25519 signing.
+7. `C_Sign(canonical_bytes, ...)` -- sign the packet head; receive 64 B signature.
+8. `C_CloseSession` -- release the session; `C_Finalize` on shutdown.
 
-The full v2.40 `CK_FUNCTION_LIST` layout makes every one of these
-calls land at the correct offset (P7.1 fix).
+The full OASIS v2.40 `CK_FUNCTION_LIST` layout, 68 function pointer slots
+in spec order, is what P7.1 (commit `c8f9767`) fixed. The hand-rolled
+struct before that had the wrong slot count and wrong offsets, which caused
+a SIGSEGV inside SoftHSM2's dispatcher on first call.
 
 ## Mechanism support
 
