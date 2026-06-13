@@ -177,6 +177,42 @@ static T cli_unwrap(nocturne::Result<T> r) {
     return std::move(*r);
 }
 
+// Consume the next argv token; throws if none remains.
+static std::string cli_next_arg(int& i, int argc, char** argv, std::string_view flag) {
+    if (i + 1 >= argc)
+        throw std::runtime_error("missing value for " + std::string(flag));
+    return std::string(argv[++i]);
+}
+
+// Returns true for options consumed during the global prescan so subcommand
+// parsers can skip them without listing them again.
+static bool is_global_opt(std::string_view a) {
+    static constexpr std::string_view kGlobalOpts[] = {
+        "--rate-limit-store", "--audit-log", "--audit-sign-key",
+        "--audit-anchor", "--audit-worm-dir", "--tpm-counter", "--hsm-pass",
+    };
+    for (const auto& opt : kGlobalOpts) if (a == opt) return true;
+    return false;
+}
+
+// Map CLI KEM string to KEMType; throws on unrecognised value.
+static nocturne::pqc::KEMType kem_str_to_type(std::string_view s) {
+    if (s == "x25519") return nocturne::pqc::KEMType::CLASSIC_X25519;
+    if (s == "hybrid") return nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024;
+    if (s == "mlkem")  return nocturne::pqc::KEMType::PURE_MLKEM1024;
+    throw std::runtime_error("unknown --kem value: " + std::string(s) +
+                             " (expected x25519|hybrid|mlkem)");
+}
+
+// Map CLI sig string to SigType; throws on unrecognised value.
+static nocturne::pqc::SigType sig_str_to_type(std::string_view s) {
+    if (s == "ed25519") return nocturne::pqc::SigType::CLASSIC_ED25519;
+    if (s == "hybrid")  return nocturne::pqc::SigType::HYBRID_ED25519_MLDSA87;
+    if (s == "mldsa")   return nocturne::pqc::SigType::PURE_MLDSA87;
+    throw std::runtime_error("unknown --sig-type value: " + std::string(s) +
+                             " (expected ed25519|hybrid|mldsa)");
+}
+
 // Usage message
 static void usage() {
     std::cout <<
@@ -277,27 +313,19 @@ int main(int argc, char** argv) {
         std::optional<std::filesystem::path> opt_tpm_counter = std::nullopt;    // External monotonic counter path
         std::string opt_hsm_pass;
 
-        // Pre-scan args for global options and filter remaining into a vector
-        std::vector<std::string> args; args.reserve(argc-1);
-        for (int i=1;i<argc;++i) {
-            std::string a = argv[i];
-            auto need = [&](int){ if (i+1>=argc) throw std::runtime_error("missing value for " + a); return std::string(argv[++i]); };
-            if (a == "--rate-limit-store") { opt_rate_store = need(1); }
-            else if (a == "--audit-log") { opt_audit_log = need(1); }
-            else if (a == "--audit-sign-key") { opt_audit_sign_key = need(1); }
-            else if (a == "--audit-anchor") { opt_audit_anchor = need(1); }
-            else if (a == "--audit-worm-dir") { opt_audit_anchor = need(1); /* temp capture; wired below */ }
-            else if (a == "--tpm-counter") { opt_tpm_counter = need(1); }
-            else if (a == "--hsm-pass") { opt_hsm_pass = need(1); }
-            else { args.push_back(a); }
-        }
-
-        // Parse optional WORM dir from args (simple pass-through via environment for now)
+        // Pre-scan args for global options and filter remaining into a vector.
         std::optional<std::filesystem::path> opt_audit_worm_dir = std::nullopt;
-        for (size_t i = 2; i + 1 < static_cast<size_t>(argc); ++i) {
-            if (std::string(argv[i]) == "--audit-worm-dir") {
-                opt_audit_worm_dir = std::filesystem::path(argv[i+1]);
-            }
+        std::vector<std::string> args; args.reserve(argc-1);
+        for (int i=1; i<argc; ++i) {
+            const std::string a = argv[i];
+            if      (a == "--rate-limit-store") opt_rate_store     = cli_next_arg(i, argc, argv, a);
+            else if (a == "--audit-log")        opt_audit_log      = cli_next_arg(i, argc, argv, a);
+            else if (a == "--audit-sign-key")   opt_audit_sign_key = cli_next_arg(i, argc, argv, a);
+            else if (a == "--audit-anchor")     opt_audit_anchor   = cli_next_arg(i, argc, argv, a);
+            else if (a == "--audit-worm-dir")   opt_audit_worm_dir = cli_next_arg(i, argc, argv, a);
+            else if (a == "--tpm-counter")      opt_tpm_counter    = cli_next_arg(i, argc, argv, a);
+            else if (a == "--hsm-pass")         opt_hsm_pass       = cli_next_arg(i, argc, argv, a);
+            else                                args.push_back(a);
         }
 
         if (opt_audit_log) audit_log::initialize(opt_audit_log, opt_audit_sign_key, opt_audit_anchor, opt_audit_worm_dir);
@@ -325,24 +353,20 @@ int main(int argc, char** argv) {
             }
             std::filesystem::create_directories(outdir);
 
-            if (kem_str == "x25519") {
+            const auto kem_type = kem_str_to_type(kem_str);
+            if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
                 auto kp = nocturne::gen_x25519();
                 write_all_raw(outdir / "receiver_x25519_pk.bin", kp.pk.data(), kp.pk.size());
                 write_all_raw(outdir / "receiver_x25519_sk.bin", kp.sk.data(), kp.sk.size());
                 std::cout << "Wrote X25519 receiver keys to " << outdir << "\n";
-            } else if (kem_str == "hybrid" || kem_str == "mlkem") {
-                auto kem_type = (kem_str == "hybrid")
-                    ? nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024
-                    : nocturne::pqc::KEMType::PURE_MLKEM1024;
+            } else {
                 auto kem = nocturne::pqc::KEMFactory{}.create(kem_type);
                 auto kp = kem->generate_keypair();
-                std::string base = "receiver_" + kem_str;
+                const std::string base = "receiver_" + std::string(kem_str);
                 write_all_raw(outdir / (base + "_pk.bin"), kp.public_key.data(), kp.public_key.size());
                 write_all_raw(outdir / (base + "_sk.bin"), kp.secret_key.data(), kp.secret_key.size());
                 std::cout << "Wrote " << kem->algorithm_name() << " receiver keys to " << outdir
                           << " (pk=" << kp.public_key.size() << "B, sk=" << kp.secret_key.size() << "B)\n";
-            } else {
-                throw std::runtime_error("unknown --kem value: " + kem_str + " (expected x25519|hybrid|mlkem)");
             }
             return 0;
         }
@@ -362,18 +386,17 @@ int main(int argc, char** argv) {
             }
             std::filesystem::create_directories(outdir);
 
-            if (sig_str == "ed25519") {
+            const auto sig_type = sig_str_to_type(sig_str);
+            if (sig_type == nocturne::pqc::SigType::CLASSIC_ED25519) {
                 auto kp = nocturne::gen_ed25519();
                 write_all_raw(outdir / "sender_ed25519_pk.bin", kp.pk.data(), kp.pk.size());
                 write_all_raw(outdir / "sender_ed25519_sk.bin", kp.sk.data(), kp.sk.size());
                 std::cout << "Wrote Ed25519 signer keys to " << outdir << "\n";
-            } else if (sig_str == "hybrid" || sig_str == "mldsa") {
-                auto sig_type = (sig_str == "hybrid")
-                    ? nocturne::pqc::SigType::HYBRID_ED25519_MLDSA87
-                    : nocturne::pqc::SigType::PURE_MLDSA87;
+            } else {
                 auto scheme = nocturne::pqc::SignatureFactory{}.create(sig_type);
                 auto kp = scheme->generate_keypair();
-                std::string base = (sig_str == "hybrid") ? "sender_hybrid_sig" : "sender_mldsa87";
+                const std::string base = (sig_type == nocturne::pqc::SigType::HYBRID_ED25519_MLDSA87)
+                    ? "sender_hybrid_sig" : "sender_mldsa87";
                 write_all_raw(outdir / (base + "_pk.bin"),
                               kp.public_key.data(), kp.public_key.size());
                 write_all_raw(outdir / (base + "_sk.bin"),
@@ -381,9 +404,6 @@ int main(int argc, char** argv) {
                 std::cout << "Wrote " << scheme->algorithm_name() << " signer keys to "
                           << outdir << " (pk=" << kp.public_key.size()
                           << "B, sk=" << kp.secret_key.size() << "B)\n";
-            } else {
-                throw std::runtime_error("unknown --sig-type value: " + sig_str +
-                                         " (expected ed25519|hybrid|mldsa)");
             }
             return 0;
         }
@@ -398,40 +418,29 @@ int main(int argc, char** argv) {
             
             // ERROR HANDLING: Comprehensive input validation and error management
             try {
-                for (int i=2;i<argc;++i) {
-                    std::string a = argv[i];
-                    auto need = [&](int){
-                        if (i+1>=argc) {
-                            throw std::runtime_error("missing value for argument: " + a);
-                        }
-                        return std::string(argv[++i]);
-                    };
+                for (int i=2; i<argc; ++i) {
+                    const std::string a = argv[i];
 
-                    // Skip global options (already parsed in main)
-                    if (a=="--rate-limit-store" || a=="--audit-log" || a=="--audit-sign-key" ||
-                        a=="--audit-anchor" || a=="--audit-worm-dir" || a=="--tpm-counter" || a=="--hsm-pass") {
-                        need(1); // consume the value
-                        continue;
-                    }
+                    if (is_global_opt(a)) { cli_next_arg(i, argc, argv, a); continue; }
 
-                    if      (a=="--rx-pk") rxpk = need(1);
-                    else if (a=="--sign-hsm-uri") signer_uri = need(1);
-                    else if (a=="--aad") aad_str = need(1);
+                    if      (a=="--rx-pk") rxpk = cli_next_arg(i, argc, argv, a);
+                    else if (a=="--sign-hsm-uri") signer_uri = cli_next_arg(i, argc, argv, a);
+                    else if (a=="--aad") aad_str = cli_next_arg(i, argc, argv, a);
                     else if (a=="--rotation-id") {
                         try {
-                            rotation_id = static_cast<uint32_t>(std::stoul(need(1)));
-                        } catch (const std::exception& e) {
+                            rotation_id = static_cast<uint32_t>(std::stoul(cli_next_arg(i, argc, argv, a)));
+                        } catch (const std::exception&) {
                             throw std::runtime_error("invalid rotation-id: must be a positive integer");
                         }
                     }
                     else if (a=="--ratchet") use_ratchet = true;
-                    else if (a=="--kem") kem_str = need(1);
-                    else if (a=="--in") in = need(1);
-                    else if (a=="--out") out = need(1);
-                    else if (a=="--replay-db") replaydb_path = need(1);
-                    else if (a=="--mac-key") mac_key_path = need(1);
-                    else if (a=="--pqc-sign-key") pqc_sign_key_path = need(1);
-                    else if (a=="--pqc-sig-type") pqc_sig_str = need(1);
+                    else if (a=="--kem") kem_str = cli_next_arg(i, argc, argv, a);
+                    else if (a=="--in") in = cli_next_arg(i, argc, argv, a);
+                    else if (a=="--out") out = cli_next_arg(i, argc, argv, a);
+                    else if (a=="--replay-db") replaydb_path = cli_next_arg(i, argc, argv, a);
+                    else if (a=="--mac-key") mac_key_path = cli_next_arg(i, argc, argv, a);
+                    else if (a=="--pqc-sign-key") pqc_sign_key_path = cli_next_arg(i, argc, argv, a);
+                    else if (a=="--pqc-sig-type") pqc_sig_str = cli_next_arg(i, argc, argv, a);
                     else throw std::runtime_error("unknown argument: " + a);
                 }
                 
@@ -462,19 +471,11 @@ int main(int argc, char** argv) {
             auto rxpk_bytes = read_all(rxpk);
 
             // Resolve --kem mode and validate the rx-pk file size against the chosen KEM.
-            nocturne::pqc::KEMType kem_type;
-            if (kem_str == "x25519") {
-                kem_type = nocturne::pqc::KEMType::CLASSIC_X25519;
-                if (rxpk_bytes.size() != crypto_kx_PUBLICKEYBYTES) {
-                    throw std::runtime_error("X25519 receiver pk size mismatch (expected 32, got " +
-                                             std::to_string(rxpk_bytes.size()) + ")");
-                }
-            } else if (kem_str == "hybrid") {
-                kem_type = nocturne::pqc::KEMType::HYBRID_X25519_MLKEM1024;
-            } else if (kem_str == "mlkem") {
-                kem_type = nocturne::pqc::KEMType::PURE_MLKEM1024;
-            } else {
-                throw std::runtime_error("unknown --kem value: " + kem_str + " (expected x25519|hybrid|mlkem)");
+            const auto kem_type = kem_str_to_type(kem_str);
+            if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519 &&
+                rxpk_bytes.size() != crypto_kx_PUBLICKEYBYTES) {
+                throw std::runtime_error("X25519 receiver pk size mismatch (expected 32, got " +
+                                         std::to_string(rxpk_bytes.size()) + ")");
             }
             std::array<uint8_t, crypto_kx_PUBLICKEYBYTES> rxpk_arr{};
             if (kem_type == nocturne::pqc::KEMType::CLASSIC_X25519) {
@@ -553,15 +554,7 @@ int main(int argc, char** argv) {
                     std::cerr << "ERR: --pqc-sign-key and --pqc-sig-type must both be set\n";
                     return 1;
                 }
-                nocturne::pqc::SigType st;
-                if      (pqc_sig_str == "ed25519") st = nocturne::pqc::SigType::CLASSIC_ED25519;
-                else if (pqc_sig_str == "hybrid")  st = nocturne::pqc::SigType::HYBRID_ED25519_MLDSA87;
-                else if (pqc_sig_str == "mldsa")   st = nocturne::pqc::SigType::PURE_MLDSA87;
-                else {
-                    std::cerr << "ERR: unknown --pqc-sig-type: " << pqc_sig_str
-                              << " (expected ed25519|hybrid|mldsa)\n";
-                    return 1;
-                }
+                const auto st = sig_str_to_type(pqc_sig_str);
                 auto sk_bytes = read_all(pqc_sign_key_path);
                 auto scheme = nocturne::pqc::SignatureFactory{}.create(st);
                 if (sk_bytes.size() != scheme->secret_key_size()) {
@@ -617,27 +610,22 @@ int main(int argc, char** argv) {
             std::filesystem::path expect_pqc_pk_path;
             std::string expect_pqc_sig_str;
             std::optional<uint32_t> min_rotation = std::nullopt;
-            for (int i=2;i<argc;++i) {
-                std::string a = argv[i];
-                auto need = [&](int){ if (i+1>=argc) throw std::runtime_error("missing value for " + a); return std::string(argv[++i]); };
+            for (int i=2; i<argc; ++i) {
+                const std::string a = argv[i];
 
-                // Skip global options (already parsed in main)
-                if (a=="--rate-limit-store" || a=="--audit-log" || a=="--audit-sign-key" ||
-                    a=="--audit-anchor" || a=="--audit-worm-dir" || a=="--tpm-counter" || a=="--hsm-pass") {
-                    need(1); // consume the value
-                    continue;
-                }
+                if (is_global_opt(a)) { cli_next_arg(i, argc, argv, a); continue; }
 
-                if      (a=="--rx-pk") rxpk = need(1);
-                else if (a=="--rx-sk") rxsk = need(1);
-                else if (a=="--expect-signer") expectpk_path = need(1);
-                else if (a=="--min-rotation") min_rotation = static_cast<uint32_t>(std::stoul(need(1)));
-                else if (a=="--in") in = need(1);
-                else if (a=="--out") out = need(1);
-                else if (a=="--replay-db") replaydb_path = need(1);
-                else if (a=="--mac-key") mac_key_path = need(1);
-                else if (a=="--expect-pqc-signer") expect_pqc_pk_path = need(1);
-                else if (a=="--pqc-sig-type") expect_pqc_sig_str = need(1);
+                if      (a=="--rx-pk") rxpk = cli_next_arg(i, argc, argv, a);
+                else if (a=="--rx-sk") rxsk = cli_next_arg(i, argc, argv, a);
+                else if (a=="--expect-signer") expectpk_path = cli_next_arg(i, argc, argv, a);
+                else if (a=="--min-rotation") min_rotation = static_cast<uint32_t>(
+                                                  std::stoul(cli_next_arg(i, argc, argv, a)));
+                else if (a=="--in") in = cli_next_arg(i, argc, argv, a);
+                else if (a=="--out") out = cli_next_arg(i, argc, argv, a);
+                else if (a=="--replay-db") replaydb_path = cli_next_arg(i, argc, argv, a);
+                else if (a=="--mac-key") mac_key_path = cli_next_arg(i, argc, argv, a);
+                else if (a=="--expect-pqc-signer") expect_pqc_pk_path = cli_next_arg(i, argc, argv, a);
+                else if (a=="--pqc-sig-type") expect_pqc_sig_str = cli_next_arg(i, argc, argv, a);
                 else throw std::runtime_error("unknown arg: " + a);
             }
             if (rxpk.empty() || rxsk.empty() || in.empty() || out.empty()) throw std::runtime_error("missing required args");
@@ -658,11 +646,7 @@ int main(int argc, char** argv) {
                 if (expect_pqc_pk_path.empty() || expect_pqc_sig_str.empty()) {
                     throw std::runtime_error("--expect-pqc-signer and --pqc-sig-type must both be set");
                 }
-                nocturne::pqc::SigType st;
-                if      (expect_pqc_sig_str == "ed25519") st = nocturne::pqc::SigType::CLASSIC_ED25519;
-                else if (expect_pqc_sig_str == "hybrid")  st = nocturne::pqc::SigType::HYBRID_ED25519_MLDSA87;
-                else if (expect_pqc_sig_str == "mldsa")   st = nocturne::pqc::SigType::PURE_MLDSA87;
-                else throw std::runtime_error("unknown --pqc-sig-type: " + expect_pqc_sig_str);
+                const auto st = sig_str_to_type(expect_pqc_sig_str);
 
                 auto pk_bytes = read_all(expect_pqc_pk_path);
                 auto scheme = nocturne::pqc::SignatureFactory{}.create(st);
@@ -740,30 +724,24 @@ int main(int argc, char** argv) {
             bool require_client_cert = false;
 
             for (int i = 2; i < argc; ++i) {
-                std::string a = argv[i];
-                auto need = [&](int){ if (i+1>=argc) throw std::runtime_error("missing value for " + a); return std::string(argv[++i]); };
+                const std::string a = argv[i];
 
-                // Skip global options (already parsed in main)
-                if (a=="--rate-limit-store" || a=="--audit-log" || a=="--audit-sign-key" ||
-                    a=="--audit-anchor" || a=="--audit-worm-dir" || a=="--tpm-counter" || a=="--hsm-pass") {
-                    need(1);
-                    continue;
-                }
+                if (is_global_opt(a)) { cli_next_arg(i, argc, argv, a); continue; }
 
-                if      (a=="--host") host = need(1);
-                else if (a=="--bind") bind_host = need(1);
+                if      (a=="--host") host = cli_next_arg(i, argc, argv, a);
+                else if (a=="--bind") bind_host = cli_next_arg(i, argc, argv, a);
                 else if (a=="--port") {
-                    unsigned long v = std::stoul(need(1));
+                    const unsigned long v = std::stoul(cli_next_arg(i, argc, argv, a));
                     if (v == 0 || v > 65535) throw std::runtime_error("--port out of range (1-65535)");
                     port = static_cast<uint16_t>(v);
                 }
-                else if (a=="--cert") cert = need(1);
-                else if (a=="--key") key = need(1);
-                else if (a=="--ca") ca = need(1);
-                else if (a=="--sni") sni = need(1);
+                else if (a=="--cert") cert = cli_next_arg(i, argc, argv, a);
+                else if (a=="--key") key = cli_next_arg(i, argc, argv, a);
+                else if (a=="--ca") ca = cli_next_arg(i, argc, argv, a);
+                else if (a=="--sni") sni = cli_next_arg(i, argc, argv, a);
                 else if (a=="--require-client-cert") require_client_cert = true;
-                else if (a=="--in") in = need(1);
-                else if (a=="--out") out = need(1);
+                else if (a=="--in") in = cli_next_arg(i, argc, argv, a);
+                else if (a=="--out") out = cli_next_arg(i, argc, argv, a);
                 else throw std::runtime_error("unknown arg: " + a);
             }
             if (port == 0) throw std::runtime_error("missing required argument: --port");

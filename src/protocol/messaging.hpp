@@ -116,6 +116,12 @@ struct DecryptOptions {
 /// @brief Encrypt @p plaintext to @p receiver_x25519_pk using classical
 ///        X25519 ECDH.
 ///
+/// @pre `sodium_init()` succeeded (guaranteed by @ref check_sodium at startup).
+/// @pre `receiver_x25519_pk` is a valid 32-byte X25519 public key (all-zero
+///      is rejected by libsodium's key-exchange step at runtime).
+/// @pre If `opts.signer` is non-null it must be healthy (`is_healthy()` true)
+///      and must have an active key loaded.
+/// @pre If `opts.replay_db` is non-null the counter file is readable/writable.
 /// @return Serialized wire-format packet ready to transmit, or:
 ///         - @c ErrorCode::RateLimited — per-receiver bucket exhausted,
 ///         - @c ErrorCode::KeyAgreementFailed — X25519 stage rejected,
@@ -129,6 +135,10 @@ struct DecryptOptions {
 
 /// @brief Decrypt a packet previously produced by @ref encrypt_packet.
 ///
+/// @pre `receiver_x25519_pk` / `receiver_x25519_sk` form a matching X25519
+///      keypair (mismatched pairs produce @c AeadAuthFailed, not UB).
+/// @pre `packet_bytes` must NOT have @c FLAG_HAS_PQC_KEM set; use
+///      @ref decrypt_packet_kem for KEM packets.
 /// @return Plaintext, or:
 ///         - @c ErrorCode::RateLimited,
 ///         - wire-format errors (2xx) from @ref deserialize,
@@ -146,6 +156,10 @@ struct DecryptOptions {
 
 /// @brief Encrypt @p plaintext using the post-quantum KEM path.
 ///
+/// @pre `kem_type != KEMType::CLASSIC_X25519` — use @ref encrypt_packet for
+///      X25519; this function returns @c KemTypeUnknown for that value.
+/// @pre `receiver_pk` size must match `kem_type`'s public key size (1600 B
+///      for hybrid, 1568 B for pure ML-KEM-1024); mismatch → @c KemSizeMismatch.
 /// @param kem_type Must be a non-classical type
 ///                 (@c pqc::KEMType::HYBRID_X25519_MLKEM1024 or
 ///                 @c pqc::KEMType::PURE_MLKEM1024). Passing
@@ -162,6 +176,11 @@ struct DecryptOptions {
 
 /// @brief Decrypt a packet previously produced by @ref encrypt_packet_kem.
 ///        The KEM type is recovered from the packet header.
+///
+/// @pre `packet_bytes` must have @c FLAG_HAS_PQC_KEM set; use
+///      @ref decrypt_packet for classical X25519 packets.
+/// @pre `receiver_pk` / `receiver_sk` must match the KEM type encoded in the
+///      packet header (size mismatch → @c KemSizeMismatch, not UB).
 ///
 /// @return Plaintext, or @c PacketFlagInconsistent (not a KEM packet /
 ///         X25519 mislabeled as PQC), @c KemTypeUnknown (adversarial
