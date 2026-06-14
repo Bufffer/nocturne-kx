@@ -26,6 +26,13 @@ struct KeyPair {
     std::vector<uint8_t> sk;
 };
 
+// crypto_kx is directional: client.tx == server.rx and client.rx == server.tx.
+// Each party must call the correct role function and use the correct direction.
+struct SessionKeys {
+    std::array<uint8_t, crypto_kx_SESSIONKEYBYTES> rx{}; // decrypt incoming messages
+    std::array<uint8_t, crypto_kx_SESSIONKEYBYTES> tx{}; // encrypt outgoing messages
+};
+
 KeyPair gen_x25519() {
     KeyPair kp;
     kp.pk.resize(crypto_kx_PUBLICKEYBYTES);
@@ -34,23 +41,41 @@ KeyPair gen_x25519() {
     return kp;
 }
 
+SessionKeys derive_client_keys(
+    const std::vector<uint8_t>& client_pk,
+    const std::vector<uint8_t>& client_sk,
+    const std::vector<uint8_t>& server_pk) {
+
+    SessionKeys keys;
+    if (crypto_kx_client_session_keys(keys.rx.data(), keys.tx.data(),
+                                      client_pk.data(), client_sk.data(),
+                                      server_pk.data()) != 0) {
+        throw std::runtime_error("Client key derivation failed");
+    }
+    return keys;
+}
+
+SessionKeys derive_server_keys(
+    const std::vector<uint8_t>& server_pk,
+    const std::vector<uint8_t>& server_sk,
+    const std::vector<uint8_t>& client_pk) {
+
+    SessionKeys keys;
+    if (crypto_kx_server_session_keys(keys.rx.data(), keys.tx.data(),
+                                      server_pk.data(), server_sk.data(),
+                                      client_pk.data()) != 0) {
+        throw std::runtime_error("Server key derivation failed");
+    }
+    return keys;
+}
+
+// Kept for backward compat with tests that don't need directional keys.
 std::array<uint8_t, crypto_kx_SESSIONKEYBYTES> derive_shared_secret(
     const std::vector<uint8_t>& client_pk,
     const std::vector<uint8_t>& client_sk,
     const std::vector<uint8_t>& server_pk) {
 
-    std::array<uint8_t, crypto_kx_SESSIONKEYBYTES> shared_secret;
-    std::array<uint8_t, crypto_kx_SESSIONKEYBYTES> rx, tx;
-
-    if (crypto_kx_client_session_keys(rx.data(), tx.data(),
-                                      client_pk.data(), client_sk.data(),
-                                      server_pk.data()) != 0) {
-        throw std::runtime_error("Key derivation failed");
-    }
-
-    // Use TX key as shared secret
-    std::copy(tx.begin(), tx.end(), shared_secret.begin());
-    return shared_secret;
+    return derive_client_keys(client_pk, client_sk, server_pk).tx;
 }
 
 std::vector<uint8_t> encrypt_message(
@@ -225,32 +250,35 @@ TEST_CASE("End-to-End Protocol Flow", "[protocol][e2e]") {
         auto alice = gen_x25519();
         auto bob = gen_x25519();
 
-        // 2. Derive shared secrets (in real protocol, would be more complex)
-        auto alice_key = derive_shared_secret(alice.pk, alice.sk, bob.pk);
-        auto bob_key = derive_shared_secret(bob.pk, bob.sk, alice.pk);
+        // 2. Derive directional session keys.
+        //    alice is the initiator (client), bob is the responder (server).
+        //    crypto_kx guarantees: alice_keys.tx == bob_keys.rx
+        //                          alice_keys.rx == bob_keys.tx
+        auto alice_keys = derive_client_keys(alice.pk, alice.sk, bob.pk);
+        auto bob_keys   = derive_server_keys(bob.pk,   bob.sk,   alice.pk);
 
         // 3. Alice sends message to Bob
         std::string alice_message = "Hello Bob, this is Alice!";
         std::vector<uint8_t> alice_plaintext(alice_message.begin(), alice_message.end());
         std::vector<uint8_t> aad;
 
-        auto alice_ciphertext = encrypt_message(alice_key, alice_plaintext, aad);
+        auto alice_ciphertext = encrypt_message(alice_keys.tx, alice_plaintext, aad);
 
-        // 4. Bob receives and decrypts
-        auto bob_received = decrypt_message(bob_key, alice_ciphertext, aad);
+        // 4. Bob receives and decrypts with his rx key (== alice's tx key)
+        auto bob_received = decrypt_message(bob_keys.rx, alice_ciphertext, aad);
         REQUIRE(bob_received.has_value());
 
         std::string bob_message_str(bob_received->begin(), bob_received->end());
         REQUIRE(bob_message_str == alice_message);
 
-        // 5. Bob replies to Alice
+        // 5. Bob replies to Alice using his tx key
         std::string bob_reply = "Hi Alice, message received!";
         std::vector<uint8_t> bob_plaintext(bob_reply.begin(), bob_reply.end());
 
-        auto bob_ciphertext = encrypt_message(bob_key, bob_plaintext, aad);
+        auto bob_ciphertext = encrypt_message(bob_keys.tx, bob_plaintext, aad);
 
-        // 6. Alice receives and decrypts
-        auto alice_received = decrypt_message(alice_key, bob_ciphertext, aad);
+        // 6. Alice receives and decrypts with her rx key (== bob's tx key)
+        auto alice_received = decrypt_message(alice_keys.rx, bob_ciphertext, aad);
         REQUIRE(alice_received.has_value());
 
         std::string alice_reply_str(alice_received->begin(), alice_received->end());
@@ -273,21 +301,20 @@ TEST_CASE("Multiple Concurrent Sessions", "[protocol][concurrency]") {
         for (int i = 0; i < num_sessions; ++i) {
             threads.emplace_back([&success_count, &failure_count, i]() {
                 try {
-                    // Generate session keypairs
                     auto client = gen_x25519();
                     auto server = gen_x25519();
 
-                    // Derive keys
-                    auto client_key = derive_shared_secret(client.pk, client.sk, server.pk);
-                    auto server_key = derive_shared_secret(server.pk, server.sk, client.pk);
+                    // Each session uses correct directional keys:
+                    // client.tx == server.rx (client→server channel)
+                    auto client_keys = derive_client_keys(client.pk, client.sk, server.pk);
+                    auto server_keys = derive_server_keys(server.pk, server.sk, client.pk);
 
-                    // Send message
                     std::string message = "Session " + std::to_string(i) + " test message";
                     std::vector<uint8_t> plaintext(message.begin(), message.end());
                     std::vector<uint8_t> aad;
 
-                    auto ciphertext = encrypt_message(client_key, plaintext, aad);
-                    auto decrypted = decrypt_message(server_key, ciphertext, aad);
+                    auto ciphertext = encrypt_message(client_keys.tx, plaintext, aad);
+                    auto decrypted  = decrypt_message(server_keys.rx, ciphertext, aad);
 
                     if (decrypted.has_value() && *decrypted == plaintext) {
                         success_count++;

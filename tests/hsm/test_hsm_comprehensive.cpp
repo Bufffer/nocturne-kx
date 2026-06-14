@@ -21,6 +21,8 @@
 #include <thread>
 #include <vector>
 #include <chrono>
+#include <mutex>
+#include <atomic>
 
 using namespace nocturne::hsm;
 using namespace nocturne::side_channel;
@@ -28,13 +30,18 @@ using namespace nocturne::side_channel;
 // Mock HSM for testing (file-based)
 class MockHSM : public HSMInterface {
 private:
+    // secret_key_ and public_key_ are written once in the constructor and
+    // never modified, so concurrent reads from multiple threads are safe.
     std::array<uint8_t, crypto_sign_SECRETKEYBYTES> secret_key_{};
     std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> public_key_{};
     bool initialized_ = false;
     bool authenticated_ = false;
-    std::vector<AuditRecord> audit_trail_;
-    uint64_t sign_count_ = 0;
-    uint64_t verify_count_ = 0;
+
+    mutable std::mutex audit_mutex_;
+    std::vector<AuditRecord> audit_trail_;   // guarded by audit_mutex_
+
+    std::atomic<uint64_t> sign_count_{0};
+    std::atomic<uint64_t> verify_count_{0};
 
 public:
     MockHSM() {
@@ -69,7 +76,7 @@ public:
         flush_cache_line(secret_key_.data());
         memory_barrier();
 
-        sign_count_++;
+        sign_count_.fetch_add(1, std::memory_order_relaxed);
         log_audit("SIGN", "SUCCESS");
 
         return signature;
@@ -85,7 +92,7 @@ public:
         int result = crypto_sign_verify_detached(
             signature.data(), data.data(), data.size(), public_key_.data());
 
-        verify_count_++;
+        verify_count_.fetch_add(1, std::memory_order_relaxed);
         log_audit("VERIFY", result == 0 ? "SUCCESS" : "FAILURE");
 
         return (result == 0);
@@ -124,6 +131,8 @@ public:
         std::optional<std::chrono::system_clock::time_point> start,
         std::optional<std::chrono::system_clock::time_point> end) const override {
 
+        std::lock_guard<std::mutex> lock(audit_mutex_);
+
         if (!start && !end) {
             return audit_trail_;
         }
@@ -137,8 +146,8 @@ public:
         return filtered;
     }
 
-    uint64_t get_sign_count() const { return sign_count_; }
-    uint64_t get_verify_count() const { return verify_count_; }
+    uint64_t get_sign_count() const { return sign_count_.load(std::memory_order_relaxed); }
+    uint64_t get_verify_count() const { return verify_count_.load(std::memory_order_relaxed); }
 
 private:
     void log_audit(const std::string& operation, const std::string& result) {
@@ -148,6 +157,7 @@ private:
         record.key_label = "test-key";
         record.result = result;
         record.operator_id = "test-user";
+        std::lock_guard<std::mutex> lock(audit_mutex_);
         audit_trail_.push_back(record);
     }
 };

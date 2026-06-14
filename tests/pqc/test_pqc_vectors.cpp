@@ -112,14 +112,15 @@ TEST_CASE("Hybrid KEM (X25519 + ML-KEM-1024)", "[pqc][hybrid]") {
     HybridKEM hybrid;
 
     SECTION("Hybrid Key Sizes") {
-        // Hybrid public key = X25519 (32) + ML-KEM (1568)
+        // Hybrid public key = X25519 (32) + ML-KEM-1024 (1568)
         REQUIRE(hybrid.public_key_size() == 32 + 1568);
 
-        // Hybrid secret key = X25519 (32) + ML-KEM (3168)
+        // Hybrid secret key = X25519 (32) + ML-KEM-1024 (3168)
         REQUIRE(hybrid.secret_key_size() == 32 + 3168);
 
-        // Hybrid ciphertext = X25519 ephemeral pk (32) + ML-KEM ct (1568)
-        REQUIRE(hybrid.ciphertext_size() == 32 + 1568);
+        // Hybrid ciphertext wire format: [1B version][32B X25519 eph pk][1568B ML-KEM ct]
+        // The 1-byte version prefix is documented in hybrid_kem.hpp.
+        REQUIRE(hybrid.ciphertext_size() == 1 + 32 + 1568);
     }
 
     SECTION("Hybrid Keypair Generation") {
@@ -136,7 +137,7 @@ TEST_CASE("Hybrid KEM (X25519 + ML-KEM-1024)", "[pqc][hybrid]") {
         auto [ct, ss_enc] = hybrid.encapsulate(kp.public_key);
 
         REQUIRE(ct.type == KEMType::HYBRID_X25519_MLKEM1024);
-        REQUIRE(ct.ciphertext.size() == 32 + 1568);
+        REQUIRE(ct.ciphertext.size() == 1 + 32 + 1568);
         REQUIRE(ss_enc.type == KEMType::HYBRID_X25519_MLKEM1024);
         REQUIRE(ss_enc.secret.size() == 32); // Final shared secret is 32 bytes
 
