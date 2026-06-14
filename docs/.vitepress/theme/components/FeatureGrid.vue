@@ -23,7 +23,7 @@ const features: Feature[] = [
   },
   {
     title: 'Bidirectional replay protection',
-    body: 'Prefix-based counter separation on a MAC-protected on-disk DB. Patent-pending.',
+    body: 'Prefix-based counter separation on a MAC-protected on-disk DB.',
     href: './guide/replay',
     iconPath:
       'M3 12a9 9 0 1 0 3.5-7.1M3 4v6h6',

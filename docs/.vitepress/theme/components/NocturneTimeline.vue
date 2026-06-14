@@ -38,7 +38,7 @@ const rows: Row[] = [
     standards: {
       badge: 'Release',
       title: 'Nocturne-KX v4 ships hybrid KEM',
-      bullets: ['X25519 ⊕ ML-KEM-1024 default', 'Patent application filed']
+      bullets: ['X25519 ⊕ ML-KEM-1024 default']
     }
   },
   {

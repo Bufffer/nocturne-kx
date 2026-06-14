@@ -17,9 +17,6 @@ anything ≤ that". Nocturne extends it in two ways:
    version), so swapping in an attacker-controlled DB or truncating
    the file fails at load time, not at first false-accept.
 
-The patent application covers the prefix-based counter separation:
-specifically, the way independent sessions multiplex through one DB
-without sharing a single monotonic count.
 
 ## The defence in action
 

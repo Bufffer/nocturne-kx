@@ -10,7 +10,7 @@ export default defineConfig({
   lang: 'en-US',
   title: 'Nocturne-KX',
   description:
-    'Patent-pending hybrid post-quantum key encapsulation and bidirectional replay protection for nation-state threat models. C++23, libsodium, ML-KEM-1024.',
+    'Hybrid post-quantum key encapsulation and bidirectional replay protection for nation-state threat models. C++23, libsodium, ML-KEM-1024.',
 
   cleanUrls: true,
   lastUpdated: true,
@@ -121,7 +121,7 @@ export default defineConfig({
 
     footer: {
       message:
-        'Patent-pending hybrid PQC KEM and bidirectional replay protection. Nocturne-KX™ is a trademark of Halil İbrahim Serdaroğlu.',
+        'Hybrid PQC KEM and bidirectional replay protection. Nocturne-KX™ is a trademark of Halil İbrahim Serdaroğlu.',
       copyright: 'Copyright © 2025-2026 Halil İbrahim Serdaroğlu · MIT License'
     },
 

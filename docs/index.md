@@ -57,18 +57,6 @@ Nocturne-KX is the answer for teams that need to ship a single binary
 
 </section>
 
-<section class="nx-section nx-section--narrow">
-
-## The post-quantum timeline
-
-The race between cryptographically-relevant quantum computers and post-quantum
-standards is narrower than most stacks assume. Nocturne-KX targets the
-midpoint.
-
-<NocturneTimeline />
-
-</section>
-
 <section class="nx-section">
 
 ## Trusted primitives, conservative choices

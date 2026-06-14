@@ -145,7 +145,7 @@ onUnmounted(() => {
 
       <p class="nx-hero__tagline">
         Nocturne-KX is a C++23 cryptographic communication toolkit built on libsodium and ML-KEM-1024.
-        Patent-pending hybrid PQC key exchange, bidirectional replay protection,
+        Hybrid PQC key exchange, bidirectional replay protection,
         and PKCS#11 HSM integration in a single binary.
       </p>
 
