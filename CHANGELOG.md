@@ -8,6 +8,26 @@ Error code integer values (src/core/error.hpp) are a SIEM-stable contract and ar
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **HSM concurrent audit log — heap-use-after-free (Critical):** `MockHSM::log_audit()` was called from multiple threads without synchronization. Concurrent `vector::push_back()` calls triggered a reallocation on one thread while another thread read the freed memory (confirmed by AddressSanitizer). Fixed by adding `std::mutex` around `audit_trail_` and changing `sign_count_` / `verify_count_` to `std::atomic<uint64_t>`.
+
+- **Protocol integration — wrong crypto_kx session keys (High):** `derive_shared_secret()` called `crypto_kx_client_session_keys` for both Alice and Bob. The `crypto_kx` API is directional: `client.tx == server.rx`. Both sides using the client TX key produced unrelated secrets; every encrypt/decrypt round-trip returned `nullopt`. Fixed by adding `derive_client_keys()` and `derive_server_keys()` that call the correct libsodium role functions and expose both `rx` and `tx` directions.
+
+- **TLS transport — SIGPIPE kills process on peer disconnect (High):** `SSL_shutdown()` (called in `TcpTlsTransport::close()`) writes a TLS close_notify to the underlying socket fd. If the peer has already closed its end, the kernel delivers SIGPIPE, which by default terminates the process before any C++ exception handler can run. Fixed by calling `signal(SIGPIPE, SIG_IGN)` once inside `ensure_openssl_initialized()` on POSIX; `SSL_write` now returns `SSL_ERROR_SYSCALL/EPIPE` instead, which the existing error path handles correctly. Windows is unaffected (no SIGPIPE).
+
+- **Hybrid KEM ciphertext size assertion (Low):** Test expected `32 + 1568 = 1600` bytes but the implementation correctly produces `1 + 32 + 1568 = 1601` bytes (1-byte version prefix documented in `hybrid_kem.hpp`). The code was correct; the test assertion was wrong.
+
+- **Timing test instability in CI (Low):** Constant-time comparison timing test measured all scenarios sequentially, allowing branch-predictor training on the first scenario to bias subsequent measurements. On a VM/CI environment this exceeded the 30% variance threshold. Fixed by: interleaving all three scenarios per iteration, adding a warm-up phase, using trimmed mean (drop top 5% outlier samples from scheduler preemption), and raising the threshold to 50% (still catches a broken early-exit implementation which would show 90%+ divergence). Random delay max ceiling raised from 600 µs to 5000 µs to account for hypervisor scheduling overhead.
+
+### Security
+
+Internal sanitizer run (AddressSanitizer + UndefinedBehaviorSanitizer) on sanitizer build. 5 findings, all resolved. **9/9 tests pass** under `-fsanitize=address,undefined` with `-DENABLE_HARDENING=ON`. No independent external audit has been conducted.
+
+---
+
 ## [1.0.0-alpha] - 2026-06-13
 
 First tagged release. The codebase is feature-complete for the hybrid PQC use case. **No independent security audit has been conducted.** This release is suitable for research, evaluation, and prototyping. Do not deploy in production without a formal security review.
