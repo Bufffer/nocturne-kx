@@ -66,6 +66,10 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
+#ifndef _WIN32
+#include <csignal>
+#endif
+
 namespace nocturne {
 namespace transport {
 namespace tls {
@@ -113,6 +117,16 @@ inline void ensure_openssl_initialized() {
         // but keeps things explicit and safe on older builds.
         OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS |
                          OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr);
+
+#ifndef _WIN32
+        // SSL_write / SSL_shutdown write to the underlying socket fd.
+        // If the peer has already closed the connection, the kernel sends
+        // SIGPIPE which by default terminates the process — bypassing any
+        // C++ exception handler. Ignoring SIGPIPE makes SSL_write return
+        // SSL_ERROR_SYSCALL (errno=EPIPE) instead, which we already handle
+        // as a runtime_error. Windows does not have SIGPIPE.
+        ::signal(SIGPIPE, SIG_IGN);
+#endif
     });
 }
 
