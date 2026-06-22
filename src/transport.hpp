@@ -105,7 +105,7 @@ inline void write_u64(Bytes& out, uint64_t v){ for(int i=0;i<8;i++) out.push_bac
             f.negotiate = NegotiatePayload{parse_features(fb)}; break;
         }
         case FrameType::DATA: {
-            need(4+4); uint32_t aad_n=read_u32(&b[off]); off+=4; uint32_t ct_n=read_u32(&b[off]); off+=4; need(aad_n+ct_n);
+            need(4+4); uint32_t aad_n=read_u32(&b[off]); off+=4; uint32_t ct_n=read_u32(&b[off]); off+=4; need(static_cast<size_t>(aad_n)+static_cast<size_t>(ct_n));
             DataPayload dp{}; dp.aad.assign(b.begin()+off, b.begin()+off+aad_n); off+=aad_n; dp.ciphertext.assign(b.begin()+off, b.begin()+off+ct_n); off+=ct_n;
             f.data = dp; break;
         }

@@ -255,7 +255,23 @@ public:
         const std::string& initiator
     ) {
         std::lock_guard<std::mutex> lock(keys_mutex_);
+        return rotate_unlocked(trigger, initiator);
+    }
 
+    /**
+     * @brief Rotation core. Precondition: the caller already holds
+     *        keys_mutex_.
+     *
+     * Factored out of rotate() so callers that already own keys_mutex_
+     * (such as emergency_revoke) can reuse it without re-locking the
+     * non-recursive keys_mutex_ and self-deadlocking. When the dual-approval
+     * branch is taken the lock order is keys_mutex_ then pending_mutex_,
+     * matching approve_rotation().
+     */
+    std::optional<std::array<uint8_t, 32>> rotate_unlocked(
+        RotationTrigger trigger,
+        const std::string& initiator
+    ) {
         if (!active_key_id_) {
             throw std::runtime_error("No active key to rotate");
         }
@@ -301,10 +317,10 @@ public:
             return std::nullopt; // Awaiting approval
         }
 
-        // Immediate rotation (no approval needed or emergency). complete_rotation
-        // calls keys_.at(new_hex), so the entry must exist first — the
-        // dual-approval branch inserts it before returning, but this path
-        // bypassed insertion entirely and threw unordered_map::at.
+        // Immediate rotation (no approval needed or emergency).
+        // complete_rotation calls keys_.at(new_hex), so the entry must exist
+        // first. The dual-approval branch inserts it before returning; this
+        // path must insert it explicitly too (otherwise keys_.at throws).
         new_metadata.state = KeyState::PENDING;
         keys_[key_id_to_hex(new_metadata.key_id)] = new_metadata;
 
@@ -323,6 +339,11 @@ public:
         const std::array<uint8_t, 32>& key_id,
         const std::string& approver
     ) {
+        // Lock ordering: keys_mutex_ BEFORE pending_mutex_, matching
+        // rotate_unlocked(). The previous order (pending then keys) was the
+        // opposite of the rotation path's, producing an AB-BA deadlock when
+        // an approval raced a rotation.
+        std::lock_guard<std::mutex> keys_lock(keys_mutex_);
         std::lock_guard<std::mutex> pending_lock(pending_mutex_);
 
         // Find pending rotation
@@ -340,11 +361,11 @@ public:
 
         // Check if enough approvals
         if (it->approvers.size() >= it->required_approvals) {
-            // Complete rotation
-            auto pending = *it;
+            // Complete rotation. complete_rotation touches only keys_ (and
+            // log_mutex_), never pending_mutex_, so holding pending_lock here
+            // is harmless and keeps the keys-before-pending order intact.
+            auto pending = std::move(*it);
             pending_rotations_.erase(it);
-
-            std::lock_guard<std::mutex> lock(keys_mutex_);
 
             if (!active_key_id_) return false;
 
@@ -418,8 +439,15 @@ public:
         old_metadata.state = KeyState::COMPROMISED;
         old_metadata.deactivated_at = std::chrono::system_clock::now();
 
-        // Immediate rotation (bypass approvals)
-        auto new_key_id = *rotate(RotationTrigger::COMPROMISE, initiator);
+        // Immediate rotation (bypass approvals). We already hold keys_mutex_,
+        // so call the unlocked core directly; calling rotate() here would
+        // re-lock the non-recursive keys_mutex_ and self-deadlock.
+        auto new_key_id = *rotate_unlocked(RotationTrigger::COMPROMISE, initiator);
+
+        // complete_rotation() archives/deactivates the predecessor; restore
+        // the COMPROMISED marker so the revoked key is never mistaken for a
+        // benign archived key.
+        keys_.at(old_hex).state = KeyState::COMPROMISED;
 
         return new_key_id;
     }

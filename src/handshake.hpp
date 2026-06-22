@@ -166,12 +166,22 @@ inline void derive_session_keys(const std::array<uint8_t, crypto_scalarmult_BYTE
             throw std::runtime_error("hs kdf failed");
     };
 
+    // Two directional keys derived from the same base. Both roles derive
+    // the SAME pair, then assign them to tx/rx by role so the initiator's tx
+    // equals the responder's rx and vice versa. The previous role-keyed
+    // labels (init-tx/init-rx vs resp-tx/resp-rx) produced four distinct
+    // keys, so initiator.tx never matched responder.rx and a bidirectional
+    // channel keyed on them could not decrypt.
+    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> k_i2r{}; // initiator -> responder
+    std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> k_r2i{}; // responder -> initiator
+    derive("nocturne-hs-i2r", k_i2r);
+    derive("nocturne-hs-r2i", k_r2i);
     if (initiator) {
-        derive("nocturne-hs-init-tx", tx);
-        derive("nocturne-hs-init-rx", rx);
+        tx = k_i2r;
+        rx = k_r2i;
     } else {
-        derive("nocturne-hs-resp-tx", tx);
-        derive("nocturne-hs-resp-rx", rx);
+        tx = k_r2i;
+        rx = k_i2r;
     }
 }
 

@@ -123,11 +123,19 @@ bool RateLimiter::allow_request(const std::string& identifier) {
     std::lock_guard<std::mutex> lock{mutex_};
 
     const auto now = std::chrono::steady_clock::now();
-    auto&      entry = request_history_[identifier];
 
-    if (now - entry.timestamp > std::chrono::hours{1}) {
+    // Opportunistic cleanup MUST run before we bind a reference into the
+    // map. cleanup_old_entries() can erase this identifier's row when it is
+    // older than the 24h window; binding `entry` first and cleaning up
+    // afterwards left a dangling reference (use-after-free) on the
+    // accounting writes below.
+    if (auto existing = request_history_.find(identifier);
+        existing != request_history_.end() &&
+        now - existing->second.timestamp > std::chrono::hours{1}) {
         cleanup_old_entries();
     }
+
+    auto& entry = request_history_[identifier];
 
     if (entry.penalty_count > 0) {
         const auto time_since_penalty = now - entry.last_penalty;
