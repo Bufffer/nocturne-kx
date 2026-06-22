@@ -93,6 +93,13 @@ class ReplayDB {
     /// @brief Force a flush to disk. Normally automatic on every set*.
     void persist();
 
+    /// @brief Wipe the in-memory MAC and metadata-encryption keys on
+    ///        teardown.
+    /// @note  Not internally synchronized: destroying an object while
+    ///        another thread is still calling into it is undefined
+    ///        regardless, so the destructor deliberately skips @c mu_.
+    ~ReplayDB();
+
   private:
     void persist_unlocked();
     void load();

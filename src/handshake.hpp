@@ -183,6 +183,12 @@ inline void derive_session_keys(const std::array<uint8_t, crypto_scalarmult_BYTE
         tx = k_r2i;
         rx = k_i2r;
     }
+    // Wipe every intermediate derived from the shared secret; only the
+    // caller's tx/rx outputs survive this function.
+    sodium_memzero(seed.data(), seed.size());
+    sodium_memzero(kbase.data(), kbase.size());
+    sodium_memzero(k_i2r.data(), k_i2r.size());
+    sodium_memzero(k_r2i.data(), k_r2i.size());
 }
 
 // Initiator role
@@ -207,6 +213,7 @@ public:
         if (crypto_scalarmult(shared.data(), eph_sk_i_.data(), h2.eph_pk_r.data()) != 0)
             throw std::runtime_error("handshake: scalarmult failed (init)");
         derive_session_keys(shared, th, true, tx_key_, rx_key_);
+        sodium_memzero(shared.data(), shared.size());
         // Produce initiator signature
         Hello3 h3{};
         crypto_sign_detached(h3.sig_i.data(), nullptr, th.data(), th.size(), id_.sk.data());
@@ -217,6 +224,15 @@ public:
     bool is_complete() const { return complete_; }
     std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> tx_key() const { return tx_key_; }
     std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> rx_key() const { return rx_key_; }
+
+    // Wipe the ephemeral secret, the derived session keys, and our copy
+    // of the long-term identity secret key when the exchange is torn down.
+    ~InitiatorHandshake() {
+        sodium_memzero(eph_sk_i_.data(), eph_sk_i_.size());
+        sodium_memzero(tx_key_.data(), tx_key_.size());
+        sodium_memzero(rx_key_.data(), rx_key_.size());
+        sodium_memzero(id_.sk.data(), id_.sk.size());
+    }
 
 private:
     Ed25519KeyPair id_{};
@@ -247,6 +263,7 @@ public:
         if (crypto_scalarmult(shared.data(), eph_sk_r_.data(), h1.eph_pk_i.data()) != 0)
             throw std::runtime_error("handshake: scalarmult failed (resp)");
         derive_session_keys(shared, th, false, tx_key_, rx_key_);
+        sodium_memzero(shared.data(), shared.size());
         seen_hello1_ = h1;
         return h2;
     }
@@ -262,6 +279,15 @@ public:
     bool is_complete() const { return complete_; }
     std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> tx_key() const { return tx_key_; }
     std::array<uint8_t, crypto_aead_xchacha20poly1305_ietf_KEYBYTES> rx_key() const { return rx_key_; }
+
+    // Wipe the ephemeral secret, the derived session keys, and our copy
+    // of the long-term identity secret key when the exchange is torn down.
+    ~ResponderHandshake() {
+        sodium_memzero(eph_sk_r_.data(), eph_sk_r_.size());
+        sodium_memzero(tx_key_.data(), tx_key_.size());
+        sodium_memzero(rx_key_.data(), rx_key_.size());
+        sodium_memzero(id_.sk.data(), id_.sk.size());
+    }
 
 private:
     Ed25519KeyPair id_{};

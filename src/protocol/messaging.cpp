@@ -62,6 +62,29 @@ namespace {
     return base;
 }
 
+/// RAII wiper for a fixed-size secret buffer. Construct it right after a
+/// secret lands in a local; every exit path (success or an early
+/// `return err(...)`) then zeroizes and cache-flushes the buffer. This
+/// replaces the scattered manual wipes that the early error returns used
+/// to skip, so no key material survives a failure path.
+class SecretGuard {
+  public:
+    SecretGuard(std::uint8_t* ptr, std::size_t len) noexcept
+        : ptr_{ptr}, len_{len} {}
+    ~SecretGuard() {
+        side_channel::secure_zero_memory(ptr_, len_);
+        side_channel::flush_cache_line(ptr_);
+    }
+    SecretGuard(const SecretGuard&)            = delete;
+    SecretGuard& operator=(const SecretGuard&) = delete;
+    SecretGuard(SecretGuard&&)                 = delete;
+    SecretGuard& operator=(SecretGuard&&)      = delete;
+
+  private:
+    std::uint8_t* ptr_;
+    std::size_t   len_;
+};
+
 }  // namespace
 
 // ---------------------------------------------------------------------
@@ -83,10 +106,13 @@ Result<Bytes> encrypt_packet(
     }
 
     auto eph = gen_x25519();
+    SecretGuard eph_guard{eph.sk.data(), eph.sk.size()};
+
     auto key = derive_tx_key_client(eph.pk, eph.sk, receiver_x25519_pk);
     if (!key) {
         return std::unexpected{key.error()};
     }
+    SecretGuard key_guard{key->data(), key->size()};
 
     Packet p;
     p.version = VERSION;
@@ -109,20 +135,22 @@ Result<Bytes> encrypt_packet(
     if (opts.use_ratchet) {
         p.flags |= FLAG_HAS_RATCHET;
         auto ratk = gen_x25519();
+        SecretGuard ratk_guard{ratk.sk.data(), ratk.sk.size()};
         p.ratchet_pk = ratk.pk;
         std::array<std::uint8_t, crypto_scalarmult_BYTES> dh_shared{};
+        SecretGuard dh_guard{dh_shared.data(), dh_shared.size()};
         if (crypto_scalarmult(dh_shared.data(), ratk.sk.data(), receiver_x25519_pk.data()) != 0) {
             return err(ErrorCode::KeyAgreementFailed, "ratchet dh failed");
         }
         auto mixed = ratchet_mix(*key, BytesView{dh_shared.data(), dh_shared.size()});
-        side_channel::secure_zero_memory(key->data(), key->size());
-        side_channel::secure_zero_memory(ratk.sk.data(), ratk.sk.size());
-        side_channel::flush_cache_line(key->data());
-        side_channel::flush_cache_line(ratk.sk.data());
         if (!mixed) {
             return std::unexpected{mixed.error()};
         }
+        // key_guard wipes the ratcheted *key at function exit; wipe the
+        // intermediate copy ratchet_mix handed back right after we adopt it.
         *key = *mixed;
+        side_channel::secure_zero_memory(mixed->data(), mixed->size());
+        side_channel::flush_cache_line(mixed->data());
     }
 
     p.aad = opts.aad;
@@ -146,13 +174,7 @@ Result<Bytes> encrypt_packet(
     }
 
     auto out = serialize(p);
-
-    side_channel::secure_zero_memory(eph.sk.data(), eph.sk.size());
-    side_channel::secure_zero_memory(key->data(), key->size());
-    side_channel::flush_cache_line(eph.sk.data());
-    side_channel::flush_cache_line(key->data());
-    side_channel::memory_barrier();
-
+    // eph_guard / key_guard wipe eph.sk and *key on the way out.
     return out;
 }
 
@@ -212,30 +234,31 @@ Result<Bytes> decrypt_packet(
     if (!key) {
         return std::unexpected{key.error()};
     }
+    SecretGuard key_guard{key->data(), key->size()};
 
     if ((p.flags & FLAG_HAS_RATCHET) != 0) {
         if (!p.ratchet_pk.has_value()) {
             return err(ErrorCode::PacketFlagInconsistent, "ratchet pk missing");
         }
         std::array<std::uint8_t, crypto_scalarmult_BYTES> dh_shared{};
+        SecretGuard dh_guard{dh_shared.data(), dh_shared.size()};
         if (crypto_scalarmult(dh_shared.data(), receiver_x25519_sk.data(),
                               p.ratchet_pk->data()) != 0) {
             return err(ErrorCode::KeyAgreementFailed, "ratchet dh failed");
         }
         auto mixed = ratchet_mix(*key, BytesView{dh_shared.data(), dh_shared.size()});
-        side_channel::secure_zero_memory(key->data(), key->size());
-        side_channel::flush_cache_line(key->data());
         if (!mixed) {
             return std::unexpected{mixed.error()};
         }
+        // key_guard wipes the ratcheted *key at function exit; wipe the
+        // intermediate copy ratchet_mix handed back right after we adopt it.
         *key = *mixed;
+        side_channel::secure_zero_memory(mixed->data(), mixed->size());
+        side_channel::flush_cache_line(mixed->data());
     }
 
     auto pt = aead_decrypt_xchacha(*key, p.nonce, p.aad, p.ciphertext);
-
-    side_channel::secure_zero_memory(key->data(), key->size());
-    side_channel::flush_cache_line(key->data());
-    side_channel::memory_barrier();
+    // key_guard wipes *key on every return below.
 
     if (pt && pt->size() > 1024 * 1024) {
         return err(ErrorCode::PacketFieldOversized,
@@ -294,6 +317,7 @@ Result<Bytes> encrypt_packet_kem(
     if (!key) {
         return std::unexpected{key.error()};
     }
+    SecretGuard key_guard{key->data(), key->size()};
 
     Packet p;
     p.version = VERSION;
@@ -335,10 +359,7 @@ Result<Bytes> encrypt_packet_kem(
     }
 
     auto out = serialize(p);
-
-    side_channel::secure_zero_memory(key->data(), key->size());
-    side_channel::flush_cache_line(key->data());
-    side_channel::memory_barrier();
+    // key_guard wipes *key on the way out.
     return out;
 }
 
@@ -449,12 +470,10 @@ Result<Bytes> decrypt_packet_kem(
     if (!key) {
         return std::unexpected{key.error()};
     }
+    SecretGuard key_guard{key->data(), key->size()};
 
     auto pt = aead_decrypt_xchacha(*key, p.nonce, p.aad, p.ciphertext);
-
-    side_channel::secure_zero_memory(key->data(), key->size());
-    side_channel::flush_cache_line(key->data());
-    side_channel::memory_barrier();
+    // key_guard wipes *key on every return below.
 
     if (pt && pt->size() > 1024 * 1024) {
         return err(ErrorCode::PacketFieldOversized,

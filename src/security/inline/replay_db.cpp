@@ -52,6 +52,11 @@ ReplayDB::ReplayDB(std::filesystem::path                       p,
     load();
 }
 
+ReplayDB::~ReplayDB() {
+    side_channel::secure_zero_memory(mac_key_.data(), mac_key_.size());
+    side_channel::secure_zero_memory(enc_key_.data(), enc_key_.size());
+}
+
 void ReplayDB::load() {
     std::lock_guard<std::mutex> lk{mu_};
     m_.clear();
@@ -80,7 +85,6 @@ void ReplayDB::load() {
     std::string json_s;
     if (!is_encrypted) {
         // Legacy: [8B version][4B json_len][json][mac]
-        if (raw.size() < 8 + 4) throw std::runtime_error{"db truncated"};
         const std::uint32_t json_len = read_u32_le(p);
         p += 4;
         if (raw.size() < 8 + 4 + json_len + crypto_generichash_BYTES) {

@@ -857,6 +857,10 @@ public:
                         signing_enabled_ = true;
                     }
                 }
+
+                // The secret key was copied into signing_sk_; wipe the
+                // transient heap buffer so a second copy doesn't linger.
+                sodium_memzero(key_bytes.data(), key_bytes.size());
             }
         }
     }
@@ -867,6 +871,8 @@ public:
     ~AuditLogger() {
         std::lock_guard<std::mutex> lock(mutex_);
         flush_buffer();
+        // Don't leave the Ed25519 signing key in process memory.
+        sodium_memzero(signing_sk_.data(), signing_sk_.size());
     }
 
     /**

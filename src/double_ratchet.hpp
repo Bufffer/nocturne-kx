@@ -327,7 +327,7 @@ inline RatchetMessage DoubleRatchet::encrypt_message(const std::vector<uint8_t>&
     // Derive nonce from message count and key
     std::array<uint8_t, 8> counter_bytes{};
     for (int i = 0; i < 8; ++i) {
-        counter_bytes[i] = static_cast<uint8_t>((m.message_count >> (8 * i)) & 0xFF);
+        counter_bytes[i] = static_cast<uint8_t>((static_cast<uint64_t>(m.message_count) >> (8 * i)) & 0xFF);
     }
     crypto_generichash(m.nonce.data(), m.nonce.size(),
         counter_bytes.data(), counter_bytes.size(),
